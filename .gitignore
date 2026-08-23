@@ -1,0 +1,17 @@
+# Arquivos do sistema
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Arquivos temporários
+*.tmp
+*.temp
+~$*
+
+# Logs
+*.log
+
+# Arquivos de configuração local
+.vscode/
+.idea/

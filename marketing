@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Business Model Canvas — EHS Smart Enterprise</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+:root{
+  --navy:#0A1E3C;
+  --navy-2:#102C55;
+  --green:#22C55E;
+  --green-soft:#DFF6E7;
+  --green-line:#8FE0AE;
+  --paper:#F2F6FB;
+  --ink:#0A1E3C;
+  --muted:#3E5A80;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#0A1424;
+  font-family:"Inter","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding:24px 16px 80px;
+  display:flex;flex-direction:column;align-items:center;gap:18px;
+}
+
+/* barra de ação (não entra na imagem) */
+.actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.btn{
+  background:var(--green);color:#062315;border:none;border-radius:9px;
+  padding:11px 20px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;
+}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent;color:#CFE1F5;border:1px solid rgba(207,225,245,.3)}
+.hint{color:#8FA6C4;font-size:12.5px;text-align:center;max-width:60ch;line-height:1.5}
+
+/* ---------- o quadro ---------- */
+.frame{width:100%;max-width:1600px;overflow-x:auto}
+#board{
+  width:1600px;
+  background:var(--paper);
+  border-radius:16px;
+  overflow:hidden;
+  color:var(--ink);
+}
+
+.head{
+  background:var(--navy);
+  padding:26px 34px;
+  display:flex;align-items:center;gap:26px;
+}
+.head .logo{display:flex;align-items:center;gap:16px;flex:0 0 auto}
+.head svg{width:52px;height:52px}
+.head h1{
+  color:#fff;font-size:34px;line-height:1;letter-spacing:-.02em;font-weight:800;
+}
+.head h1 em{font-style:normal;color:var(--green)}
+.head h1 span{display:block;font-size:16px;font-weight:600;color:#B9CBE2;letter-spacing:.01em;margin-top:6px}
+.head .claim{
+  flex:1;border-left:1px solid rgba(255,255,255,.18);padding-left:26px;
+  color:#DCE7F5;font-size:19px;font-weight:600;line-height:1.35;font-style:italic;
+}
+.head .claim b{color:var(--green);font-style:normal}
+.head .meta{
+  flex:0 0 auto;border-left:1px solid rgba(255,255,255,.18);padding-left:26px;
+  color:#B9CBE2;font-size:12.5px;line-height:1.5;text-align:right;
+}
+.head .meta b{color:#fff;display:block;font-size:14px;margin-bottom:3px}
+
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr 1.12fr 1fr 1fr;
+  grid-template-areas:
+    "par ativ prop rel seg"
+    "par rec  prop can seg"
+    "cus cus  cus  rec2 rec2";
+  gap:12px;
+  padding:16px;
+}
+.a-par{grid-area:par}.a-ativ{grid-area:ativ}.a-rec{grid-area:rec}
+.a-prop{grid-area:prop}.a-rel{grid-area:rel}.a-can{grid-area:can}
+.a-seg{grid-area:seg}.a-cus{grid-area:cus}.a-rec2{grid-area:rec2}
+
+.box{
+  background:#fff;border-radius:12px;overflow:hidden;
+  border:1px solid #DCE5F0;display:flex;flex-direction:column;
+}
+.box .bh{
+  background:var(--navy);color:#fff;padding:12px 14px;
+  display:flex;align-items:center;gap:10px;
+}
+.box .bh .no{
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:11px;color:var(--green);border:1px solid rgba(34,197,94,.5);
+  border-radius:5px;padding:2px 6px;letter-spacing:.06em;
+}
+.box .bh h2{font-size:15px;font-weight:800;letter-spacing:-.01em;line-height:1.15}
+.box .bd{padding:13px 14px 15px;flex:1}
+.box ul{list-style:none;display:grid;gap:8px}
+.box li{
+  font-size:12.6px;line-height:1.38;color:#243B5C;padding-left:15px;position:relative;
+}
+.box li::before{
+  content:"";position:absolute;left:0;top:.42em;width:7px;height:7px;border-radius:2px;background:var(--green);
+}
+.box li b{color:var(--navy);font-weight:700}
+
+/* proposta de valor em destaque */
+.a-prop{border-color:var(--green-line)}
+.a-prop .bd{background:var(--green-soft)}
+.a-prop .pitch{
+  font-size:15.5px;font-weight:800;line-height:1.32;color:var(--navy);
+  padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid var(--green-line);
+}
+.a-prop .pitch small{display:block;font-size:12.6px;font-weight:500;color:#2C4A6E;margin-top:8px;line-height:1.42}
+.a-prop li{color:#1F3D2C}
+.a-prop li b{color:#0E3D22}
+
+.foot{
+  background:var(--navy);color:#fff;padding:15px 34px;
+  display:flex;align-items:center;justify-content:space-between;gap:20px;
+}
+.foot .slogan{font-size:19px;font-weight:800;letter-spacing:-.01em}
+.foot .slogan em{font-style:normal;color:var(--green)}
+.foot .norms{
+  font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:#9FB6D0;letter-spacing:.1em;
+}
+</style>
+</head>
+<body>
+
+<div class="frame">
+<div id="board">
+
+  <div class="head">
+    <div class="logo">
+      <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <path d="M24 3 42 10v14c0 11-7.6 19.3-18 21C13.6 43.3 6 35 6 24V10L24 3Z" stroke="#22C55E" stroke-width="2.6"/>
+        <path d="M15 26c0-5 4-9 9-9s9 4 9 9" stroke="#22C55E" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M13 26h22" stroke="#22C55E" stroke-width="2.6" stroke-linecap="round"/>
+      </svg>
+      <h1>Business Model <em>Canvas</em><span>EHS Smart Enterprise</span></h1>
+    </div>
+    <div class="claim">Da planilha que registra o passado<br>à plataforma que <b>age no presente.</b></div>
+    <div class="meta"><b>Jornada de Inovação SENAI</b>Segurança do Trabalho com<br>Inteligência, Controle e Prevenção</div>
+  </div>
+
+  <div class="grid">
+
+    <!-- 1 PARCEIROS -->
+    <div class="box a-par">
+      <div class="bh"><span class="no">01</span><h2>Parceiros-Chave</h2></div>
+      <div class="bd">
+        <ul>
+          <li><b>SENAI</b> — validação técnica, laboratório e rede industrial</li>
+          <li><b>Consultorias de SST</b> e engenheiros de segurança como canal de indicação</li>
+          <li><b>Fornecedores e distribuidores de EPI</b> — catálogo, CA e vida útil de fábrica</li>
+          <li><b>Integradores de hardware</b> — totens, leitores RFID/QR e relógios de ponto</li>
+          <li><b>Provedor de nuvem</b> (Google Workspace no MVP, banco relacional em produção)</li>
+          <li><b>Escritórios trabalhistas</b> — validação do valor probatório da auditoria</li>
+          <li><b>Associações e sindicatos industriais</b> — acesso a plantas e credibilidade</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 2 ATIVIDADES -->
+    <div class="box a-ativ">
+      <div class="bh"><span class="no">02</span><h2>Atividades-Chave</h2></div>
+      <div class="bd">
+        <ul>
+          <li>Desenvolvimento e evolução da plataforma (back-end, totem e dashboards)</li>
+          <li><b>Parametrização das travas normativas</b> NR-01, 06, 10, 12, 33 e 35</li>
+          <li>Migração das planilhas legadas sem perda de histórico</li>
+          <li>Implantação assistida e piloto de 60 dias em setor crítico</li>
+          <li>Vigilância normativa contínua do MTE e atualização das regras</li>
+          <li>Treinamento de SST, gestores e almoxarifado</li>
+          <li>Suporte operacional e sustentação</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 3 RECURSOS -->
+    <div class="box a-rec">
+      <div class="bh"><span class="no">03</span><h2>Recursos-Chave</h2></div>
+      <div class="bd">
+        <ul>
+          <li><b>Motor de regras normativo</b> — a NR codificada como condição de acesso</li>
+          <li><b>Auditoria imutável</b> com hash SHA-256 encadeado (append-only)</li>
+          <li><b>Motor preditivo de fadiga</b> com alerta exclusivo ao gestor</li>
+          <li><b>Dossiê Técnico</b> — base de conhecimento normativa e comportamental</li>
+          <li>Equipe de engenharia somada a especialista em Segurança do Trabalho</li>
+          <li>Front-end industrial: totem, relógio de ponto e painéis por perfil (RBAC)</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 4 PROPOSTA DE VALOR -->
+    <div class="box a-prop">
+      <div class="bh"><span class="no">04</span><h2>Proposta de Valor</h2></div>
+      <div class="bd">
+        <div class="pitch">
+          Transformar a gestão de segurança da indústria de um controle reativo em uma plataforma preventiva e rastreável.
+          <small>O sistema não registra o problema: ele age antes que o problema aconteça, bloqueando o acesso quando o requisito de segurança não é atendido.</small>
+        </div>
+        <ul>
+          <li><b>Hard Stop:</b> bloqueio automático da atividade crítica antes da ocorrência</li>
+          <li><b>Segurança jurídica:</b> prova de entrega e de bloqueio que ninguém edita ou apaga</li>
+          <li><b>EPI vinculado à função e ao CA:</b> fim da entrega incorreta e do desperdício</li>
+          <li><b>Fadiga preditiva sem expor saúde:</b> alerta só ao gestor, ponto livre de travas</li>
+          <li><b>Gamificação assimétrica:</b> mentor nunca perde ponto pelo erro do mentorado</li>
+          <li><b>Baixo custo de entrada:</b> aproveita as planilhas atuais, piloto em 60 dias</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 5 RELACIONAMENTO -->
+    <div class="box a-rel">
+      <div class="bh"><span class="no">05</span><h2>Relacionamento com Clientes</h2></div>
+      <div class="bd">
+        <ul>
+          <li>Venda consultiva com diagnóstico de exposição e cálculo de ROI</li>
+          <li><b>Piloto assistido</b> com ponto focal técnico dedicado</li>
+          <li>Capacitação das equipes de SST, gestão e almoxarifado</li>
+          <li>Revisão trimestral de indicadores com a diretoria</li>
+          <li><b>Atualização normativa como serviço</b> — a norma muda, o sistema acompanha</li>
+          <li>Suporte de campo para operação de totem e liberação de EPI</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 6 CANAIS -->
+    <div class="box a-can">
+      <div class="bh"><span class="no">06</span><h2>Canais</h2></div>
+      <div class="bd">
+        <ul>
+          <li>Venda direta à diretoria industrial e à gerência de SST</li>
+          <li><b>Prova de conceito</b> em um setor crítico como porta de entrada</li>
+          <li>Feiras, congressos e eventos de segurança do trabalho</li>
+          <li>SENAI e instituições de ensino técnico</li>
+          <li>Indicação de consultorias, engenheiros e técnicos de SST</li>
+          <li>Canais digitais: site, LinkedIn e demonstração remota</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 7 SEGMENTOS -->
+    <div class="box a-seg">
+      <div class="bh"><span class="no">07</span><h2>Segmentos de Clientes</h2></div>
+      <div class="bd">
+        <ul>
+          <li><b>Indústrias de médio e grande porte</b> com atividade crítica recorrente</li>
+          <li>Diretoria industrial e de operações (decisor econômico)</li>
+          <li><b>Gestão de SST</b> (decisor técnico e usuário avançado)</li>
+          <li>Almoxarifado e controle de EPI (usuário diário do totem)</li>
+          <li>Gestores de setor e supervisão de turno</li>
+          <li>Empresas terceirizadas que operam dentro da planta</li>
+          <li>Construção pesada, manutenção industrial e energia</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 8 CUSTOS -->
+    <div class="box a-cus">
+      <div class="bh"><span class="no">08</span><h2>Estrutura de Custos</h2></div>
+      <div class="bd">
+        <ul style="grid-template-columns:1fr 1fr;display:grid;column-gap:22px">
+          <li>Desenvolvimento e evolução do produto (full-stack)</li>
+          <li>Infraestrutura em nuvem e licenças de software</li>
+          <li>Hardware: totens, tablets e leitores QR Code / RFID</li>
+          <li>Equipe técnica e especialista em Segurança do Trabalho</li>
+          <li>Migração de dados e implantação em cliente</li>
+          <li>Treinamento, capacitação e suporte de campo</li>
+          <li>Estrutura comercial, marketing e presença em feiras</li>
+          <li>Sustentação, monitoramento e atualização normativa</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 9 RECEITAS -->
+    <div class="box a-rec2">
+      <div class="bh"><span class="no">09</span><h2>Fontes de Receita</h2></div>
+      <div class="bd">
+        <ul style="grid-template-columns:1fr 1fr;display:grid;column-gap:22px">
+          <li><b>Assinatura da plataforma</b> por colaborador ativo ou por unidade</li>
+          <li>Implantação, parametrização das NRs e configuração inicial</li>
+          <li>Serviço de migração das planilhas e do histórico</li>
+          <li>Treinamento e capacitação das equipes</li>
+          <li>Suporte premium com SLA e atendimento em campo</li>
+          <li><b>Expansão por setor e por unidade industrial</b></li>
+          <li>Módulos adicionais: RCA, POPs dinâmicos e painel executivo</li>
+          <li>Intermediação de hardware de leitura e totens</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <div class="slogan">Mais segurança. Mais controle. <em>Mais eficiência.</em></div>
+    <div class="norms">NR-01 · NR-06 · NR-10 · NR-12 · NR-33 · NR-35</div>
+  </div>
+
+</div>
+</div>
+
+<div class="actions">
+  <button class="btn" id="png">Baixar como imagem (PNG)</button>
+  <button class="btn ghost" id="print">Salvar em PDF / imprimir</button>
+</div>
+<p class="hint">O PNG sai em alta resolução (3200&nbsp;px de largura), pronto para slide, mural ou anexo de e-mail.</p>
+
+<script>
+document.getElementById('png').onclick = function(){
+  var b = this; b.textContent = 'Gerando…'; b.disabled = true;
+  html2canvas(document.getElementById('board'), {scale:2, backgroundColor:'#F2F6FB', useCORS:true})
+    .then(function(canvas){
+      var a = document.createElement('a');
+      a.download = 'canvas-ehs-smart-enterprise.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+      b.textContent = 'Baixar como imagem (PNG)'; b.disabled = false;
+    })
+    .catch(function(){
+      b.textContent = 'Falhou — use imprimir em PDF'; b.disabled = false;
+    });
+};
+document.getElementById('print').onclick = function(){ window.print(); };
+</script>
+</body>
+</html>

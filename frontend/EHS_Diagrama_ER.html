@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EHS Smart Enterprise — Diagrama ER do MVP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --graphite:#151A21;
+    --panel:#1E252E;
+    --panel-2:#262F3A;
+    --line:#3A4654;
+    --ink:#E6EBF1;
+    --ink-dim:#8E9BAA;
+    --signal-blue:#4FA3D1;   /* dados mestres */
+    --signal-amber:#E8A33D;  /* transacional */
+    --signal-green:#4FBF87;  /* gamificação */
+    --signal-red:#E05B4B;    /* auditoria / bloqueio */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:
+      repeating-linear-gradient(90deg,transparent 0 79px,rgba(255,255,255,.02) 79px 80px),
+      var(--graphite);
+    color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;
+    padding:32px 24px 64px;
+  }
+  header{max-width:1420px;margin:0 auto 28px}
+  .eyebrow{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.18em;
+    color:var(--signal-amber);text-transform:uppercase;margin-bottom:8px;
+  }
+  h1{
+    font-family:'Barlow Condensed',sans-serif;font-weight:700;
+    font-size:clamp(30px,5vw,50px);letter-spacing:.01em;line-height:1;
+    text-transform:uppercase;
+  }
+  h1 span{color:var(--ink-dim)}
+  .sub{color:var(--ink-dim);font-size:14px;margin-top:10px;max-width:70ch}
+
+  /* faixa de segurança industrial — elemento assinatura */
+  .hazard{
+    height:8px;margin:20px 0 26px;border-radius:2px;
+    background:repeating-linear-gradient(-45deg,#E8A33D 0 14px,#151A21 14px 28px);
+    opacity:.85;
+  }
+
+  .legend{max-width:1420px;margin:0 auto 20px;display:flex;flex-wrap:wrap;gap:10px}
+  .chip{
+    display:flex;align-items:center;gap:8px;background:var(--panel);
+    border:1px solid var(--line);border-radius:999px;padding:6px 14px;
+    font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim);
+  }
+  .dot{width:9px;height:9px;border-radius:2px}
+
+  .stage-wrap{max-width:1420px;margin:0 auto;overflow-x:auto;padding-bottom:12px}
+  #stage{position:relative;width:1420px;height:1010px}
+  svg#wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+  .ent{
+    position:absolute;width:400px;background:var(--panel);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;
+    box-shadow:0 12px 30px rgba(0,0,0,.42);
+  }
+  .ent-head{
+    padding:11px 14px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--panel-2);
+  }
+  .ent-name{
+    font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:19px;
+    letter-spacing:.05em;text-transform:uppercase;
+  }
+  .ent-tag{
+    font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;
+    padding:3px 7px;border-radius:3px;text-transform:uppercase;white-space:nowrap;
+  }
+  .ent-body{padding:8px 0}
+  .col{
+    display:grid;grid-template-columns:26px 1fr auto;gap:8px;align-items:center;
+    padding:4px 14px;font-family:'JetBrains Mono',monospace;font-size:11.5px;
+  }
+  .key{font-size:9px;font-weight:700;letter-spacing:.06em;text-align:center}
+  .k-pk{color:var(--signal-amber)}
+  .k-fk{color:var(--signal-blue)}
+  .k-fx{color:var(--signal-green)}
+  .cname{color:var(--ink)}
+  .cnote{color:var(--ink-dim);font-size:10px;text-align:right}
+  .ent-foot{
+    padding:8px 14px;border-top:1px solid var(--line);
+    font-size:10.5px;color:var(--ink-dim);line-height:1.5;
+  }
+
+  .b-blue{border-top:3px solid var(--signal-blue)}
+  .b-amber{border-top:3px solid var(--signal-amber)}
+  .b-green{border-top:3px solid var(--signal-green)}
+  .b-red{border-top:3px solid var(--signal-red)}
+  .t-blue{background:rgba(79,163,209,.15);color:var(--signal-blue)}
+  .t-amber{background:rgba(232,163,61,.15);color:var(--signal-amber)}
+  .t-green{background:rgba(79,191,135,.15);color:var(--signal-green)}
+  .t-red{background:rgba(224,91,75,.15);color:var(--signal-red)}
+
+  .wire-label{
+    font-family:'JetBrains Mono',monospace;font-size:9.5px;fill:var(--ink-dim);
+  }
+  .wire-label-bg{fill:var(--graphite)}
+
+  .notes{max-width:1420px;margin:36px auto 0;display:grid;gap:14px;
+    grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .note{
+    background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--signal-amber);
+    border-radius:6px;padding:16px 18px;
+  }
+  .note h3{
+    font-family:'Barlow Condensed',sans-serif;font-size:16px;letter-spacing:.06em;
+    text-transform:uppercase;margin-bottom:7px;
+  }
+  .note p{font-size:13px;color:var(--ink-dim);line-height:1.6}
+  .note code{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--signal-amber)}
+  .note.green{border-left-color:var(--signal-green)}
+  .note.green code{color:var(--signal-green)}
+  .note.red{border-left-color:var(--signal-red)}
+  .note.red code{color:var(--signal-red)}
+
+  @media (prefers-reduced-motion:no-preference){
+    .ent{animation:rise .5s cubic-bezier(.2,.7,.3,1) backwards}
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">EHS Smart Enterprise · MVP Google Sheets</div>
+  <h1>Diagrama de Entidades <span>/ 8 abas</span></h1>
+  <div class="hazard"></div>
+  <p class="sub">Mapa das chaves primárias, estrangeiras e campos calculados. Toda seta representa uma dependência real: se a origem some, o destino fica órfão. Campos marcados como fórmula nunca são digitados.</p>
+</header>
+
+<div class="legend">
+  <div class="chip"><span class="dot" style="background:var(--signal-blue)"></span>Cadastro mestre</div>
+  <div class="chip"><span class="dot" style="background:var(--signal-amber)"></span>Transacional</div>
+  <div class="chip"><span class="dot" style="background:var(--signal-green)"></span>Gamificação</div>
+  <div class="chip"><span class="dot" style="background:var(--signal-red)"></span>Auditoria imutável</div>
+  <div class="chip"><span class="k-pk key">PK</span>Chave primária</div>
+  <div class="chip"><span class="k-fk key">FK</span>Chave estrangeira</div>
+  <div class="chip"><span class="k-fx key">fx</span>Campo calculado</div>
+</div>
+
+<div class="stage-wrap">
+  <div id="stage">
+    <svg id="wires"></svg>
+
+    <!-- ============ CADASTROS MESTRES ============ -->
+    <div class="ent b-blue" id="e_empresas" style="left:20px;top:20px">
+      <div class="ent-head">
+        <div class="ent-name">Empresas_Terceiras</div>
+        <div class="ent-tag t-blue">Mestre</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">id_empresa</span><span class="cnote">EMP-001</span></div>
+        <div class="col"><span class="key"></span><span class="cname">cnpj</span><span class="cnote">único</span></div>
+        <div class="col"><span class="key"></span><span class="cname">razao_social</span><span class="cnote"></span></div>
+        <div class="col"><span class="key"></span><span class="cname">numero_contrato</span><span class="cnote">único</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">contrato_vigente</span><span class="cnote">SIM / NÃO</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">status_contrato</span><span class="cnote">VIGENTE…</span></div>
+        <div class="col"><span class="key"></span><span class="cname">status_documentacao</span><span class="cnote">REGULAR…</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">setores_autorizados</span><span class="cnote">→ Setores</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">qtd_colaboradores_ativos</span><span class="cnote">CONT.SE</span></div>
+      </div>
+      <div class="ent-foot">Contrato vencido ou documentação irregular <strong>bloqueia a equipe inteira</strong> em cascata.</div>
+    </div>
+
+    <div class="ent b-blue" id="e_setores" style="left:510px;top:20px">
+      <div class="ent-head">
+        <div class="ent-name">Setores</div>
+        <div class="ent-tag t-blue">Mestre</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">id_setor</span><span class="cnote">SET-001</span></div>
+        <div class="col"><span class="key"></span><span class="cname">nome_setor</span><span class="cnote">único</span></div>
+        <div class="col"><span class="key"></span><span class="cname">centro_custo</span><span class="cnote">CC-4501</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">id_gestor_responsavel</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">id_gestor_substituto</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key"></span><span class="cname">nivel_criticidade</span><span class="cnote">BAIXO…CRÍTICO</span></div>
+        <div class="col"><span class="key"></span><span class="cname">nrs_aplicaveis</span><span class="cnote">NR-10;NR-35</span></div>
+        <div class="col"><span class="key"></span><span class="cname">permite_terceirizado</span><span class="cnote">SIM / NÃO</span></div>
+      </div>
+      <div class="ent-foot">O <code style="font-family:'JetBrains Mono';color:var(--signal-amber)">id_gestor_responsavel</code> é o endereço de entrega do Alerta Preditivo de Fadiga.</div>
+    </div>
+
+    <div class="ent b-blue" id="e_epi" style="left:1000px;top:20px">
+      <div class="ent-head">
+        <div class="ent-name">Equipamentos_EPI_EPC</div>
+        <div class="ent-tag t-blue">Mestre</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">codigo_epi</span><span class="cnote">EPI-0001</span></div>
+        <div class="col"><span class="key"></span><span class="cname">nome</span><span class="cnote"></span></div>
+        <div class="col"><span class="key"></span><span class="cname">numero_ca</span><span class="cnote">NR-06</span></div>
+        <div class="col"><span class="key"></span><span class="cname">validade_ca</span><span class="cnote">data</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">status_ca</span><span class="cnote">VÁLIDO…</span></div>
+        <div class="col"><span class="key"></span><span class="cname">vida_util_dias</span><span class="cnote">inteiro &gt; 0</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">estoque_atual</span><span class="cnote">derivado</span></div>
+        <div class="col"><span class="key"></span><span class="cname">ponto_pedido</span><span class="cnote">≥ 0</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">status_estoque</span><span class="cnote">OK / REPOR…</span></div>
+        <div class="col"><span class="key"></span><span class="cname">custo_unitario</span><span class="cnote">→ ROI</span></div>
+      </div>
+      <div class="ent-foot"><code style="font-family:'JetBrains Mono';color:var(--signal-red)">status_ca = VENCIDO</code> bloqueia a entrega mesmo com estoque disponível.</div>
+    </div>
+
+    <div class="ent b-blue" id="e_funcoes" style="left:20px;top:400px">
+      <div class="ent-head">
+        <div class="ent-name">Funcoes</div>
+        <div class="ent-tag t-blue">Mestre</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">id_funcao</span><span class="cnote">FUN-001</span></div>
+        <div class="col"><span class="key"></span><span class="cname">nome_funcao</span><span class="cnote"></span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">id_setor_vinculado</span><span class="cnote">→ Setores</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">epis_obrigatorios</span><span class="cnote">→ EPI (N:N)</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">epis_condicionais</span><span class="cnote">→ EPI (N:N)</span></div>
+        <div class="col"><span class="key"></span><span class="cname">nrs_obrigatorias</span><span class="cnote">NR-06;NR-10</span></div>
+        <div class="col"><span class="key"></span><span class="cname">grau_exposicao_risco</span><span class="cnote">→ fadiga</span></div>
+        <div class="col"><span class="key"></span><span class="cname">limite_horas_extras_mes</span><span class="cnote">parâmetro</span></div>
+        <div class="col"><span class="key"></span><span class="cname">elegivel_gamificacao</span><span class="cnote">SIM / NÃO</span></div>
+      </div>
+      <div class="ent-foot">É aqui que o totem descobre <strong>o que</strong> cada colaborador precisa vestir.</div>
+    </div>
+
+    <!-- ============ NÚCLEO ============ -->
+    <div class="ent b-blue" id="e_func" style="left:510px;top:400px">
+      <div class="ent-head">
+        <div class="ent-name">Funcionarios</div>
+        <div class="ent-tag t-blue">Núcleo</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">matricula</span><span class="cnote">NAT- / TER-</span></div>
+        <div class="col"><span class="key"></span><span class="cname">tipo_vinculo</span><span class="cnote">NATIVO / TERC.</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">empresa</span><span class="cnote">→ Empresas</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">setor</span><span class="cnote">→ Setores</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">funcao</span><span class="cnote">→ Funcoes</span></div>
+        <div class="col"><span class="key"></span><span class="cname">perfil_rbac</span><span class="cnote">5 perfis</span></div>
+        <div class="col"><span class="key"></span><span class="cname">senha_hash + salt</span><span class="cnote">protegido</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">id_gestor</span><span class="cnote">↺ auto-relação</span></div>
+        <div class="col"><span class="key"></span><span class="cname">cartao_rfid</span><span class="cnote">único</span></div>
+        <div class="col"><span class="key"></span><span class="cname">status</span><span class="cnote">ATIVO…</span></div>
+      </div>
+      <div class="ent-foot">Tabela central: 6 das 8 abas dependem da <code style="font-family:'JetBrains Mono';color:var(--signal-amber)">matricula</code>.</div>
+    </div>
+
+    <div class="ent b-amber" id="e_mov" style="left:1000px;top:400px">
+      <div class="ent-head">
+        <div class="ent-name">Movimentacoes_Trocas</div>
+        <div class="ent-tag t-amber">Append-only</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">id_movimentacao</span><span class="cnote">MOV-…</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">matricula</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">codigo_epi</span><span class="cnote">→ EPI</span></div>
+        <div class="col"><span class="key"></span><span class="cname">tipo_movimentacao</span><span class="cnote">8 tipos</span></div>
+        <div class="col"><span class="key"></span><span class="cname">motivo_troca</span><span class="cnote">DESGASTE…</span></div>
+        <div class="col"><span class="key"></span><span class="cname">ca_no_momento</span><span class="cnote">snapshot</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">perc_vida_util_aproveitada</span><span class="cnote">métrica-mãe</span></div>
+        <div class="col"><span class="key"></span><span class="cname">status_confirmacao_totem</span><span class="cnote">PENDENTE…</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">responsavel_almox</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">id_movimentacao_estornada</span><span class="cnote">↺ auto-relação</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">impacto_gamificacao</span><span class="cnote">POS/NEU/NEG</span></div>
+      </div>
+      <div class="ent-foot">Alimenta o <code style="font-family:'JetBrains Mono';color:var(--signal-amber)">estoque_atual</code> do EPI e a pontuação da gamificação.</div>
+    </div>
+
+    <!-- ============ GAMIFICAÇÃO E AUDITORIA ============ -->
+    <div class="ent b-green" id="e_gami" style="left:510px;top:770px">
+      <div class="ent-head">
+        <div class="ent-name">Gamificacao_Mentoria</div>
+        <div class="ent-tag t-green">Assimétrica</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">id_vinculo</span><span class="cnote">MNT-0001</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">matricula_mentor</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">matricula_mentorado</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">id_setor</span><span class="cnote">→ Setores</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">pontos_acumulados_mentorado</span><span class="cnote">só positivos</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">evolucao_liquida_mentorado</span><span class="cnote">piso zero</span></div>
+        <div class="col"><span class="key"></span><span class="cname">percentual_repasse_mentor</span><span class="cnote">5% a 25%</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">saldo_bonus_mentor</span><span class="cnote">nunca decresce</span></div>
+        <div class="col"><span class="key k-fx">fx</span><span class="cname">infracoes_mentorado</span><span class="cnote">informativo</span></div>
+        <div class="col"><span class="key"></span><span class="cname">impacto_infracoes_no_mentor</span><span class="cnote">= ZERO fixo</span></div>
+      </div>
+      <div class="ent-foot">Não existe coluna de débito para o mentor. <strong>Se o campo não existe, o bug não existe.</strong></div>
+    </div>
+
+    <div class="ent b-red" id="e_log" style="left:20px;top:770px">
+      <div class="ent-head">
+        <div class="ent-name">Log_Auditoria</div>
+        <div class="ent-tag t-red">Imutável</div>
+      </div>
+      <div class="ent-body">
+        <div class="col"><span class="key k-pk">PK</span><span class="cname">id_log</span><span class="cnote">LOG-…</span></div>
+        <div class="col"><span class="key"></span><span class="cname">timestamp</span><span class="cnote">ISO 8601</span></div>
+        <div class="col"><span class="key k-fk">FK</span><span class="cname">matricula_usuario</span><span class="cnote">→ Funcionarios</span></div>
+        <div class="col"><span class="key"></span><span class="cname">perfil_rbac_no_momento</span><span class="cnote">snapshot</span></div>
+        <div class="col"><span class="key"></span><span class="cname">acao_realizada</span><span class="cnote">18 tipos</span></div>
+        <div class="col"><span class="key"></span><span class="cname">tabela_afetada</span><span class="cnote">qualquer aba</span></div>
+        <div class="col"><span class="key"></span><span class="cname">hash_registro</span><span class="cnote">SHA-256</span></div>
+        <div class="col"><span class="key"></span><span class="cname">hash_anterior</span><span class="cnote">corrente</span></div>
+        <div class="col"><span class="key"></span><span class="cname">sequencia</span><span class="cnote">sem lacunas</span></div>
+      </div>
+      <div class="ent-foot">Recebe eventos de <strong>todas</strong> as abas. Escrita só por script; ninguém edita.</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="notes">
+  <div class="note">
+    <h3>Onde o alerta de fadiga encontra o gestor</h3>
+    <p>O caminho é <code>Funcionarios.setor → Setores.id_gestor_responsavel</code>. Se um setor ficar sem gestor titular, o alerta cai no <code>id_gestor_substituto</code>. Sem nenhum dos dois, o alerta fica órfão — por isso os dois campos travam a inativação do setor.</p>
+  </div>
+  <div class="note green">
+    <h3>Por que a gamificação lê o estoque</h3>
+    <p><code>Movimentacoes_Trocas.perc_vida_util_aproveitada</code> nasce da troca e vira <code>impacto_gamificacao</code>. A aba de mentoria só consome o resultado positivo. As infrações ficam registradas, mas em coluna isolada de qualquer fórmula do mentor.</p>
+  </div>
+  <div class="note red">
+    <h3>A corrente de hash</h3>
+    <p>Cada linha do log guarda o hash da anterior. Apagar a linha 500 quebra a validação da 501 em diante. Uma rotina diária percorre a corrente e sinaliza a quebra — a adulteração fica visível mesmo sem backup.</p>
+  </div>
+  <div class="note">
+    <h3>Duas auto-relações a validar</h3>
+    <p><code>Funcionarios.id_gestor</code> aponta para outra matrícula da mesma aba (hierarquia). <code>Movimentacoes_Trocas.id_movimentacao_estornada</code> aponta para outra movimentação (correção sem apagar). Ambas precisam de trava contra referência circular.</p>
+  </div>
+</div>
+
+<script>
+/* ---------------------------------------------------------
+   Conexões do diagrama: origem (FK) → destino (PK)
+   As linhas são calculadas a partir da posição real dos cards,
+   então mover um card no HTML redesenha tudo sozinho.
+--------------------------------------------------------- */
+const RELS = [
+  { from:'e_func',  to:'e_empresas', label:'empresa',              color:'#4FA3D1' },
+  { from:'e_func',  to:'e_setores',  label:'setor',                color:'#4FA3D1' },
+  { from:'e_func',  to:'e_funcoes',  label:'funcao',               color:'#4FA3D1' },
+  { from:'e_funcoes', to:'e_setores', label:'id_setor_vinculado',  color:'#4FA3D1' },
+  { from:'e_funcoes', to:'e_epi',    label:'epis_obrigatorios (N:N)', color:'#4FA3D1' },
+  { from:'e_setores', to:'e_func',   label:'id_gestor_responsavel', color:'#E8A33D' },
+  { from:'e_empresas', to:'e_setores', label:'setores_autorizados', color:'#4FA3D1' },
+  { from:'e_mov',   to:'e_func',     label:'matricula',            color:'#E8A33D' },
+  { from:'e_mov',   to:'e_epi',      label:'codigo_epi',           color:'#E8A33D' },
+  { from:'e_gami',  to:'e_func',     label:'mentor + mentorado',   color:'#4FBF87' },
+  { from:'e_gami',  to:'e_mov',      label:'consome impacto_gamificacao', color:'#4FBF87' },
+  { from:'e_log',   to:'e_func',     label:'matricula_usuario',    color:'#E05B4B' },
+];
+
+const SELF = [
+  { on:'e_func', label:'id_gestor ↺', color:'#E8A33D' },
+  { on:'e_mov',  label:'estorno ↺',   color:'#E8A33D' },
+];
+
+const svg = document.getElementById('wires');
+const stage = document.getElementById('stage');
+const NS = 'http://www.w3.org/2000/svg';
+
+function box(id){
+  const el = document.getElementById(id);
+  const r = el.getBoundingClientRect();
+  const s = stage.getBoundingClientRect();
+  return { x:r.left-s.left, y:r.top-s.top, w:r.width, h:r.height,
+           cx:r.left-s.left+r.width/2, cy:r.top-s.top+r.height/2 };
+}
+
+/* Corta a reta entre dois centros na borda do retângulo de origem */
+function edge(b, tx, ty){
+  const dx = tx-b.cx, dy = ty-b.cy;
+  if(dx===0 && dy===0) return {x:b.cx,y:b.cy};
+  const sx = dx===0 ? Infinity : (b.w/2)/Math.abs(dx);
+  const sy = dy===0 ? Infinity : (b.h/2)/Math.abs(dy);
+  const s = Math.min(sx,sy);
+  return { x:b.cx+dx*s, y:b.cy+dy*s };
+}
+
+function mk(tag, attrs){
+  const e = document.createElementNS(NS, tag);
+  for(const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function draw(){
+  svg.innerHTML = '';
+  const defs = mk('defs');
+  const seen = new Set();
+  [...RELS, ...SELF].forEach(r=>{
+    if(seen.has(r.color)) return;
+    seen.add(r.color);
+    const m = mk('marker',{ id:'ar'+r.color.slice(1), markerWidth:9, markerHeight:9,
+      refX:8, refY:4.5, orient:'auto' });
+    m.appendChild(mk('path',{ d:'M0,0 L9,4.5 L0,9 z', fill:r.color }));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  RELS.forEach(r=>{
+    const a = box(r.from), b = box(r.to);
+    const p1 = edge(a, b.cx, b.cy);
+    const p2 = edge(b, a.cx, a.cy);
+    svg.appendChild(mk('line',{
+      x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y,
+      stroke:r.color, 'stroke-width':1.6, 'stroke-opacity':.75,
+      'marker-end':'url(#ar'+r.color.slice(1)+')'
+    }));
+    svg.appendChild(mk('circle',{ cx:p1.x, cy:p1.y, r:3.5, fill:r.color }));
+
+    const mx = (p1.x+p2.x)/2, my = (p1.y+p2.y)/2;
+    const wpx = r.label.length*5.6 + 12;
+    svg.appendChild(mk('rect',{ x:mx-wpx/2, y:my-8, width:wpx, height:16,
+      rx:3, fill:'#151A21', stroke:r.color, 'stroke-opacity':.45 }));
+    const t = mk('text',{ x:mx, y:my+3.5, 'text-anchor':'middle', class:'wire-label' });
+    t.textContent = r.label;
+    svg.appendChild(t);
+  });
+
+  SELF.forEach(s=>{
+    const b = box(s.on);
+    const x = b.x+b.w, y = b.y+b.h*0.5;
+    svg.appendChild(mk('path',{
+      d:`M ${x} ${y-22} C ${x+56} ${y-40}, ${x+56} ${y+40}, ${x} ${y+22}`,
+      fill:'none', stroke:s.color, 'stroke-width':1.6, 'stroke-opacity':.7,
+      'stroke-dasharray':'4 3', 'marker-end':'url(#ar'+s.color.slice(1)+')'
+    }));
+    const t = mk('text',{ x:x+62, y:y+4, class:'wire-label' });
+    t.textContent = s.label;
+    svg.appendChild(t);
+  });
+}
+
+document.querySelectorAll('.ent').forEach((e,i)=> e.style.animationDelay = (i*55)+'ms');
+window.addEventListener('load', draw);
+window.addEventListener('resize', draw);
+setTimeout(draw, 350);
+</script>
+</body>
+</html>

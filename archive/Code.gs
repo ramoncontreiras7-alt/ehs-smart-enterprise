@@ -1,0 +1,1681 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EHS SMART ENTERPRISE · Code.gs — v2.0
+ * Camada de infraestrutura: base de dados, auditoria imutável (SHA-256
+ * encadeado), RBAC BIDIMENSIONAL e API operacional do Totem.
+ *
+ * NOVIDADE DA v2.0 — Controle de acesso em duas dimensões:
+ *
+ *   perfil_rbac        → O QUE a pessoa pode fazer (compliance/Dossiê 6.4)
+ *                        FUNCIONARIO · TERCEIRIZADO · GESTOR · SST · ADMIN
+ *
+ *   nivel_hierarquico  → SOBRE QUEM ela pode fazer (governança executiva)
+ *                        OPERACIONAL · GESTOR · DIRETORIA · MASTER_ADMIN
+ *
+ * As duas travas são AND, nunca OR. Um diretor sem perfil SST continua sem
+ * poder abrir RCA; um SST sem nível de diretoria continua vendo só a planta.
+ *
+ * ONDE COLAR: Planilha → Extensões → Apps Script → arquivo "Code.gs"
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 1 · CONFIGURAÇÃO
+═══════════════════════════════════════════════════════════════════════════ */
+
+const CFG = {
+
+  VERSAO: '2.0',
+
+  ABAS: {
+    FUNCIONARIOS: 'Funcionarios',
+    EQUIPAMENTOS: 'Equipamentos_EPI_EPC',
+    MOVIMENTACOES: 'Movimentacoes_Trocas',
+    LOG: 'Log_Auditoria',
+    GAMIFICACAO: 'Gamificacao_Mentoria',
+    SETORES: 'Setores',
+    FUNCOES: 'Funcoes',
+    EMPRESAS: 'Empresas_Terceiras',
+    TREINAMENTOS: 'Treinamentos',
+    JORNADA: 'Jornada_Consolidada',
+    ACOES_PREVENTIVAS: 'Acoes_Preventivas'
+  },
+
+  COL_FUNCIONARIOS: {
+    matricula: 1, nome_completo: 2, cpf: 3, tipo_vinculo: 4, empresa: 5,
+    setor: 6, funcao: 7, perfil_rbac: 8, senha_hash: 9, salt: 10,
+    id_gestor: 11, cartao_rfid: 12, id_biometrico: 13, data_admissao: 14,
+    data_fim_contrato: 15, status: 16, motivo_bloqueio: 17, criado_em: 18,
+    atualizado_em: 19, atualizado_por: 20,
+    status_efetivo: 21, motivo_bloqueio_automatico: 22,
+    // ── NOVAS COLUNAS DA v2.0 ──
+    nivel_hierarquico: 23,      // W · OPERACIONAL / GESTOR / DIRETORIA / MASTER_ADMIN
+    unidades_visiveis: 24,      // X · lista "UNI-01;UNI-02". Vazio = todas do nível
+    // ── NOVA COLUNA DO MODELO HÍBRIDO ──
+    email_corporativo: 25       // Y · só preenchido para quem tem Workspace.
+                                 // Terceirizado e boa parte do chão de fábrica
+                                 // ficam com esta célula vazia — DE PROPÓSITO.
+  },
+
+  COL_EQUIPAMENTOS: {
+    codigo_epi: 1, nome: 2, categoria: 3, grupo_protecao: 4, fabricante: 5,
+    numero_ca: 6, validade_ca: 7, status_ca: 8, vida_util_dias: 9,
+    exige_higienizacao: 10, periodicidade_higien_dias: 11, unidade_medida: 12,
+    estoque_atual: 13, ponto_pedido: 14, estoque_seguranca: 15,
+    status_estoque: 16, custo_unitario: 17, localizacao_almox: 18,
+    nrs_associadas: 19, status_item: 20
+  },
+
+  COL_MOVIMENTACOES: {
+    id_movimentacao: 1, data_hora: 2, matricula: 3, codigo_epi: 4,
+    tipo_movimentacao: 5, quantidade: 6, motivo_troca: 7, ca_no_momento: 8,
+    lote: 9, data_validade_calculada: 10, dias_uso_efetivo: 11,
+    perc_vida_util_aproveitada: 12, status_confirmacao_totem: 13,
+    metodo_confirmacao: 14, timestamp_confirmacao: 15, id_totem: 16,
+    responsavel_almox: 17, observacao: 18, id_movimentacao_estornada: 19,
+    impacto_gamificacao: 20, hash_registro: 21
+  },
+
+  COL_LOG: {
+    id_log: 1, timestamp: 2, matricula_usuario: 3, perfil_rbac_no_momento: 4,
+    acao_realizada: 5, tabela_afetada: 6, id_registro_afetado: 7,
+    valor_anterior: 8, valor_novo: 9, justificativa: 10, origem_acao: 11,
+    id_dispositivo: 12, endereco_ip: 13, resultado: 14, criticidade: 15,
+    hash_registro: 16, hash_anterior: 17, sequencia: 18,
+    // ── NOVA COLUNA DA v2.0 ──
+    nivel_hierarquico_no_momento: 19   // S · snapshot do nível na hora da ação
+  },
+
+  COL_SETORES: {
+    id_setor: 1, nome_setor: 2, centro_custo: 3, id_unidade: 4,
+    id_gestor_responsavel: 5, id_gestor_substituto: 6, nivel_criticidade: 7,
+    nrs_aplicaveis: 8, exige_liberacao_previa: 9, permite_terceirizado: 10,
+    descricao_riscos: 11, status: 12
+  },
+
+  COL_FUNCOES: {
+    id_funcao: 1, nome_funcao: 2, id_setor_vinculado: 3, cbo: 4,
+    epis_obrigatorios: 5, epis_condicionais: 6, nrs_obrigatorias: 7,
+    treinamentos_obrigatorios: 8, atividades_criticas_permitidas: 9,
+    exige_aso_especifico: 10, grau_exposicao_risco: 11,
+    limite_horas_extras_mes: 12, elegivel_gamificacao: 13, status: 14
+  },
+
+  COL_EMPRESAS: {
+    id_empresa: 1, cnpj: 2, razao_social: 3, nome_fantasia: 4,
+    numero_contrato: 5, objeto_contrato: 6, data_inicio_contrato: 7,
+    data_fim_contrato: 8, contrato_vigente: 9, status_contrato: 10,
+    status_documentacao: 11, pgr_entregue: 12, pcmso_entregue: 13,
+    validade_documentacao: 14, responsavel_tecnico: 15, contato_email: 16,
+    contato_telefone: 17, setores_autorizados: 18, fornece_proprio_epi: 19,
+    qtd_colaboradores_ativos: 20, status: 21
+  },
+
+  COL_TREINAMENTOS: {
+    id_treinamento: 1, matricula: 2, norma: 3, carga_horaria: 4,
+    data_realizacao: 5, data_vencimento: 6, instrutor: 7,
+    numero_certificado: 8, status: 9
+  },
+
+  COL_JORNADA: {
+    matricula: 1, data_referencia: 2, horas_extras_mes: 3,
+    turnos_consecutivos: 4, intervalo_min_horas: 5,
+    atividades_criticas_7d: 6, ocorrencias_recentes: 7
+  },
+
+  COL_GAMIFICACAO: {
+    id_vinculo: 1, matricula_mentor: 2, matricula_mentorado: 3, id_setor: 4,
+    data_inicio_vinculo: 5, data_fim_vinculo: 6, status_vinculo: 7,
+    pontos_acumulados_mentorado: 8, pontos_base_inicial: 9,
+    evolucao_liquida_mentorado: 10, percentual_repasse_mentor: 11,
+    saldo_bonus_mentor: 12, saldo_bonus_acumulado_historico: 13,
+    infracoes_mentorado: 14, impacto_infracoes_no_mentor: 15,
+    perc_vida_util_media_mentorado: 16, qtd_trocas_positivas: 17,
+    nivel_evolucao: 18, validado_por_sst: 19, data_validacao_sst: 20,
+    observacoes_sst: 21
+  },
+
+  COL_ACOES_PREVENTIVAS: {
+    id_acao: 1, timestamp: 2, matricula_alvo: 3, nome_alvo_snapshot: 4,
+    matricula_solicitante: 5, perfil_rbac_solicitante: 6,
+    nivel_hierarquico_solicitante: 7, origem_identificacao: 8,
+    alerta_disparo: 9, recomendacao_registrada: 10, status_acao: 11,
+    data_conclusao: 12, observacoes: 13, id_log: 14
+  },
+
+  /* ─────────────────────────────────────────────────────────────────────
+     DIMENSÃO 1 · PERFIS OPERACIONAIS (Dossiê 6.4) — O QUE pode fazer
+  ───────────────────────────────────────────────────────────────────── */
+  PERFIS: ['FUNCIONARIO', 'TERCEIRIZADO', 'GESTOR', 'SST', 'ADMIN'],
+  PERFIS_SENSIVEIS: ['GESTOR', 'SST', 'ADMIN'],
+  PERFIS_INVESTIGACAO: ['SST', 'ADMIN'],
+  PERFIS_ALMOXARIFADO: ['FUNCIONARIO', 'SST', 'ADMIN'],
+
+  /* ─────────────────────────────────────────────────────────────────────
+     DIMENSÃO 2 · NÍVEIS HIERÁRQUICOS — SOBRE QUEM pode fazer
+
+     escopo:
+       PROPRIO   → só os próprios dados
+       SETORIAL  → setores onde é gestor titular ou substituto
+       GLOBAL    → todas as unidades (ou as listadas em unidades_visiveis)
+
+     ve_dado_nominal_sensivel:
+       Controla o acesso a fadiga, saúde ocupacional e RCA COM NOME.
+       A DIRETORIA recebe FALSE de propósito — ver nota de homologação.
+  ───────────────────────────────────────────────────────────────────── */
+  HIERARQUIA: {
+    OPERACIONAL:  { peso: 1, escopo: 'PROPRIO',  ve_dado_nominal_sensivel: false },
+    GESTOR:       { peso: 2, escopo: 'SETORIAL', ve_dado_nominal_sensivel: true  },
+    DIRETORIA:    { peso: 3, escopo: 'GLOBAL',   ve_dado_nominal_sensivel: false },
+    MASTER_ADMIN: { peso: 4, escopo: 'GLOBAL',   ve_dado_nominal_sensivel: true  }
+  },
+
+  /**
+   * Combinações permitidas. Impede que um FUNCIONARIO seja promovido a
+   * DIRETORIA por engano de digitação e passe a enxergar a planta inteira.
+   */
+  COMBINACOES_VALIDAS: {
+    MASTER_ADMIN: ['ADMIN'],
+    DIRETORIA:    ['ADMIN', 'GESTOR', 'SST'],
+    GESTOR:       ['GESTOR', 'SST', 'ADMIN'],
+    OPERACIONAL:  ['FUNCIONARIO', 'TERCEIRIZADO', 'GESTOR', 'SST', 'ADMIN']
+  },
+
+  HORAS_EXPIRACAO_CONFIRMACAO: 24,
+  TIMEOUT_LOCK: 20000
+};
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 2 · LEITURA DA BASE
+═══════════════════════════════════════════════════════════════════════════ */
+
+function _aba(nome) {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nome);
+  if (!sh) throw new Error('Aba não encontrada: ' + nome);
+  return sh;
+}
+
+function _lerTudo(nomeAba) {
+  const sh = _aba(nomeAba);
+  const ultima = sh.getLastRow();
+  if (ultima < 2) return [];
+  return sh.getRange(2, 1, ultima - 1, sh.getLastColumn()).getValues();
+}
+
+function _buscarLinha(nomeAba, coluna, chave) {
+  const dados = _lerTudo(nomeAba);
+  const alvo = String(chave).trim().toUpperCase();
+  for (let i = 0; i < dados.length; i++) {
+    if (String(dados[i][coluna - 1]).trim().toUpperCase() === alvo) {
+      return { linha: i + 2, dados: dados[i] };
+    }
+  }
+  return null;
+}
+
+function _listar(texto) {
+  if (!texto) return [];
+  return String(texto).split(';')
+    .map(function (t) { return t.trim(); })
+    .filter(function (t) { return t !== ''; });
+}
+
+function _diasAte(data) {
+  if (!data) return null;
+  const d = (data instanceof Date) ? data : new Date(data);
+  if (isNaN(d.getTime())) return null;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  return Math.round((d - hoje) / 86400000);
+}
+
+function _formatarData(d) {
+  if (!d) return '';
+  return Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 3 · AUDITORIA IMUTÁVEL
+   Corrente de hash: cada linha carrega o hash da anterior.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function _sha256(texto) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, texto, Utilities.Charset.UTF_8);
+  return bytes.map(function (b) {
+    return ('0' + (b & 0xFF).toString(16)).slice(-2);
+  }).join('');
+}
+
+/** Versão PÚBLICA: pega o lock. Use quando o log for a única escrita. */
+function registrarLog(evento) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+  try {
+    return _gravarLogSemTrava(evento);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Versão INTERNA: NÃO pega o lock.
+ * Use de dentro de operações que já estão segurando a trava — senão o script
+ * fica esperando um lock que ele mesmo detém (deadlock).
+ */
+function _gravarLogSemTrava(evento) {
+  const sh = _aba(CFG.ABAS.LOG);
+  const ultima = sh.getLastRow();
+  const sequencia = ultima;
+
+  let hashAnterior = '0'.repeat(64);
+  if (ultima >= 2) {
+    const anterior = sh.getRange(ultima, CFG.COL_LOG.hash_registro).getValue();
+    if (anterior) hashAnterior = String(anterior);
+  }
+
+  const agora = new Date();
+  const idLog = 'LOG-' +
+    Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+    ('000000' + sequencia).slice(-6);
+
+  const linha = [
+    idLog, agora,
+    evento.matricula_usuario || 'SISTEMA',
+    evento.perfil_rbac_no_momento || 'SISTEMA',
+    evento.acao_realizada,
+    evento.tabela_afetada || '',
+    evento.id_registro_afetado || '',
+    evento.valor_anterior || '',
+    evento.valor_novo || '',
+    evento.justificativa || '',
+    evento.origem_acao || 'MOTOR_REGRAS',
+    evento.id_dispositivo || 'SERVIDOR',
+    evento.endereco_ip || '',
+    evento.resultado || 'SUCESSO',
+    evento.criticidade || 'INFO',
+    '',                                          // hash_registro
+    hashAnterior,
+    sequencia,
+    evento.nivel_hierarquico_no_momento || 'SISTEMA'   // v2.0
+  ];
+
+  linha[CFG.COL_LOG.hash_registro - 1] = _sha256(linha.join('|'));
+  sh.appendRow(linha);
+  return idLog;
+}
+
+function verificarIntegridadeLog() {
+  const dados = _lerTudo(CFG.ABAS.LOG);
+  const problemas = [];
+  let hashEsperado = '0'.repeat(64);
+
+  for (let i = 0; i < dados.length; i++) {
+    const linha = dados[i].slice(0, CFG.COL_LOG.nivel_hierarquico_no_momento);
+    const numeroLinha = i + 2;
+
+    if (String(linha[CFG.COL_LOG.hash_anterior - 1]) !== hashEsperado) {
+      problemas.push('Linha ' + numeroLinha + ': corrente rompida.');
+    }
+    if (Number(linha[CFG.COL_LOG.sequencia - 1]) !== i + 1) {
+      problemas.push('Linha ' + numeroLinha + ': lacuna na sequência — registro apagado.');
+    }
+
+    const hashGravado = String(linha[CFG.COL_LOG.hash_registro - 1]);
+    const copia = linha.slice();
+    copia[CFG.COL_LOG.hash_registro - 1] = '';
+    if (_sha256(copia.join('|')) !== hashGravado) {
+      problemas.push('Linha ' + numeroLinha + ': conteúdo alterado após a gravação.');
+    }
+    hashEsperado = hashGravado;
+  }
+
+  return { integro: problemas.length === 0, total_registros: dados.length, problemas: problemas };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 4 · RBAC BIDIMENSIONAL  ← NÚCLEO DA v2.0
+═══════════════════════════════════════════════════════════════════════════ */
+
+function _obterUsuario(matricula) {
+  const r = _buscarLinha(CFG.ABAS.FUNCIONARIOS, CFG.COL_FUNCIONARIOS.matricula, matricula);
+  if (!r) return null;
+  const c = CFG.COL_FUNCIONARIOS;
+
+  const perfil = String(r.dados[c.perfil_rbac - 1] || '').trim().toUpperCase();
+
+  // Nível ausente cai para o mais restritivo. Nunca o contrário.
+  let nivel = String(r.dados[c.nivel_hierarquico - 1] || '').trim().toUpperCase();
+  if (!CFG.HIERARQUIA[nivel]) nivel = _nivelPadraoPara(perfil);
+
+  // Combinação inválida também rebaixa. Escalada de privilégio por
+  // digitação errada na planilha não pode acontecer em silêncio.
+  const combinacoesOk = CFG.COMBINACOES_VALIDAS[nivel] || [];
+  let rebaixado = false;
+  if (combinacoesOk.indexOf(perfil) === -1) {
+    nivel = _nivelPadraoPara(perfil);
+    rebaixado = true;
+  }
+
+  return {
+    matricula: r.dados[c.matricula - 1],
+    nome_completo: r.dados[c.nome_completo - 1],
+    tipo_vinculo: r.dados[c.tipo_vinculo - 1],
+    empresa: r.dados[c.empresa - 1],
+    setor: r.dados[c.setor - 1],
+    funcao: r.dados[c.funcao - 1],
+    perfil_rbac: perfil,
+    nivel_hierarquico: nivel,
+    nivel_rebaixado_por_inconsistencia: rebaixado,
+    unidades_visiveis: _listar(r.dados[c.unidades_visiveis - 1]),
+    id_gestor: r.dados[c.id_gestor - 1],
+    data_fim_contrato: r.dados[c.data_fim_contrato - 1],
+    status: r.dados[c.status - 1],
+    // status_efetivo é fórmula. É ELE que o sistema obedece, não a coluna status.
+    status_efetivo: r.dados[c.status_efetivo - 1] || r.dados[c.status - 1],
+    motivo_bloqueio_automatico: r.dados[c.motivo_bloqueio_automatico - 1] ||
+                                r.dados[c.motivo_bloqueio - 1] || '',
+    linha: r.linha
+  };
+}
+
+/**
+ * Busca por e-mail — usada SÓ pelas telas administrativas (desktop
+ * corporativo). Nunca chamada pelo fluxo de Totem/Ponto.
+ */
+function _obterUsuarioPorEmail(email) {
+  if (!email) return null;
+  const c = CFG.COL_FUNCIONARIOS;
+  const alvo = String(email).trim().toLowerCase();
+  const dados = _lerTudo(CFG.ABAS.FUNCIONARIOS);
+
+  for (let i = 0; i < dados.length; i++) {
+    const emailLinha = String(dados[i][c.email_corporativo - 1] || '').trim().toLowerCase();
+    if (emailLinha && emailLinha === alvo) {
+      return _obterUsuario(dados[i][c.matricula - 1]);
+    }
+  }
+  return null;
+}
+
+function _nivelPadraoPara(perfil) {
+  if (perfil === 'ADMIN') return 'MASTER_ADMIN';
+  if (perfil === 'GESTOR' || perfil === 'SST') return 'GESTOR';
+  return 'OPERACIONAL';
+}
+
+function _peso(nivel) {
+  const h = CFG.HIERARQUIA[nivel];
+  return h ? h.peso : 0;
+}
+
+function _veDadoNominalSensivel(usuario) {
+  const h = CFG.HIERARQUIA[usuario.nivel_hierarquico];
+  return !!(h && h.ve_dado_nominal_sensivel);
+}
+
+/**
+ * PORTEIRO ÚNICO. Toda função sensível passa por aqui antes de ler dado.
+ *
+ * opcoes = {
+ *   perfis:       array de perfis operacionais aceitos (obrigatório)
+ *   nivelMinimo:  nome do nível mínimo exigido (opcional)
+ *   contexto:     string identificando o recurso, usada no log
+ * }
+ *
+ * As duas travas são AND. Passar em uma só não libera.
+ */
+function _exigirAcesso(matriculaSolicitante, opcoes) {
+  const contexto = opcoes.contexto || 'RECURSO_NAO_IDENTIFICADO';
+  const u = _obterUsuario(matriculaSolicitante);
+
+  if (!u) {
+    registrarLog({
+      matricula_usuario: matriculaSolicitante, acao_realizada: 'CONSULTA_SENSIVEL',
+      tabela_afetada: contexto, resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+      justificativa: 'Matrícula não cadastrada'
+    });
+    throw new Error('Acesso negado: usuário não identificado.');
+  }
+
+  // Usuário bloqueado não acessa painel nenhum, mesmo sendo diretor
+  if (String(u.status_efetivo).toUpperCase() !== 'ATIVO') {
+    _negar(u, contexto, 'Usuário com status ' + u.status_efetivo);
+  }
+
+  // Trava 1 · perfil operacional
+  if (opcoes.perfis && opcoes.perfis.indexOf(u.perfil_rbac) === -1) {
+    _negar(u, contexto, 'Perfil ' + u.perfil_rbac + ' sem permissão operacional');
+  }
+
+  // Trava 2 · nível hierárquico
+  if (opcoes.nivelMinimo && _peso(u.nivel_hierarquico) < _peso(opcoes.nivelMinimo)) {
+    _negar(u, contexto, 'Nível ' + u.nivel_hierarquico +
+                        ' abaixo do mínimo exigido (' + opcoes.nivelMinimo + ')');
+  }
+
+  // Rebaixamento silencioso vira evento de auditoria — precisa ser investigado
+  if (u.nivel_rebaixado_por_inconsistencia) {
+    registrarLog({
+      matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+      nivel_hierarquico_no_momento: u.nivel_hierarquico,
+      acao_realizada: 'ALTERACAO_PERMISSAO', tabela_afetada: CFG.ABAS.FUNCIONARIOS,
+      id_registro_afetado: u.matricula, resultado: 'NEGADO_RBAC', criticidade: 'CRITICO',
+      justificativa: 'Combinação perfil/nível inválida na base. Nível rebaixado para ' +
+                     u.nivel_hierarquico + '. Verificar cadastro.'
+    });
+  }
+
+  return u;
+}
+
+function _negar(u, contexto, motivo) {
+  registrarLog({
+    matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+    nivel_hierarquico_no_momento: u.nivel_hierarquico,
+    acao_realizada: 'CONSULTA_SENSIVEL', tabela_afetada: contexto,
+    resultado: 'NEGADO_RBAC', criticidade: 'AVISO', justificativa: motivo
+  });
+  throw new Error('Acesso negado: ' + motivo + '.');
+}
+
+/** Compatibilidade com a v1.x. Chama o porteiro novo por baixo. */
+function _exigirPerfil(matricula, perfisPermitidos, contexto) {
+  return _exigirAcesso(matricula, { perfis: perfisPermitidos, contexto: contexto });
+}
+
+/**
+ * Resolve QUAIS setores o usuário enxerga, combinando as duas dimensões.
+ * É a função que traduz "nível hierárquico" em lista concreta de setores.
+ */
+function _resolverEscopo(usuario) {
+  const cs = CFG.COL_SETORES;
+  const setores = _lerTudo(CFG.ABAS.SETORES).filter(function (s) {
+    return s[cs.id_setor - 1] && String(s[cs.status - 1]).toUpperCase() === 'ATIVO';
+  });
+
+  const escopo = CFG.HIERARQUIA[usuario.nivel_hierarquico].escopo;
+  let visiveis;
+
+  if (escopo === 'GLOBAL') {
+    // Diretoria pode ser limitada a unidades específicas via coluna X
+    visiveis = usuario.unidades_visiveis.length
+      ? setores.filter(function (s) {
+          return usuario.unidades_visiveis.indexOf(String(s[cs.id_unidade - 1])) !== -1;
+        })
+      : setores;
+
+  } else if (escopo === 'SETORIAL') {
+    visiveis = setores.filter(function (s) {
+      return String(s[cs.id_gestor_responsavel - 1]) === String(usuario.matricula) ||
+             String(s[cs.id_gestor_substituto - 1]) === String(usuario.matricula);
+    });
+    // Gestor sem setor atribuído enxerga ao menos o próprio setor de lotação
+    if (!visiveis.length) {
+      visiveis = setores.filter(function (s) {
+        return String(s[cs.id_setor - 1]) === String(usuario.setor);
+      });
+    }
+
+  } else {  // PROPRIO
+    visiveis = setores.filter(function (s) {
+      return String(s[cs.id_setor - 1]) === String(usuario.setor);
+    });
+  }
+
+  return {
+    tipo: escopo,
+    apenas_proprios_dados: escopo === 'PROPRIO',
+    ve_dado_nominal_sensivel: _veDadoNominalSensivel(usuario),
+    setores: visiveis.map(function (s) {
+      return {
+        id_setor: s[cs.id_setor - 1],
+        nome_setor: s[cs.nome_setor - 1],
+        id_unidade: s[cs.id_unidade - 1],
+        centro_custo: s[cs.centro_custo - 1],
+        nivel_criticidade: s[cs.nivel_criticidade - 1]
+      };
+    }),
+    ids_setores: visiveis.map(function (s) { return String(s[cs.id_setor - 1]); })
+  };
+}
+
+/** Diagnóstico rápido de cadastro. Útil para conferir a matriz na implantação. */
+function api_MinhasPermissoes(matricula) {
+  const u = _obterUsuario(matricula);
+  if (!u) return { erro: 'Matrícula não cadastrada.' };
+  const escopo = _resolverEscopo(u);
+  return {
+    matricula: u.matricula, nome: u.nome_completo,
+    perfil_rbac: u.perfil_rbac,
+    nivel_hierarquico: u.nivel_hierarquico,
+    rebaixado_por_inconsistencia: u.nivel_rebaixado_por_inconsistencia,
+    escopo: escopo.tipo,
+    setores_visiveis: escopo.setores.length,
+    ve_dado_nominal_sensivel: escopo.ve_dado_nominal_sensivel
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   NOTA HISTÓRICA · não há mais definição de obterContextoUsuario aqui.
+
+   O Apps Script tem escopo global único e não avisa sobre redeclaração:
+   a última definição do arquivo simplesmente substituiria uma anterior em
+   silêncio. Por segurança, qualquer duplicata desta função foi removida —
+   a definição única e vigente fica no BLOCO 8-B mais abaixo, que delega
+   para _montarContexto() (o mesmo núcleo usado por
+   obterContextoUsuarioSessao()). Uma lista branca, um lugar só.
+
+   Quem estiver procurando a função, pule para BLOCO 8-B.
+───────────────────────────────────────────────────────────────────────── */
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 5 · MOTOR DE CONFORMIDADE
+═══════════════════════════════════════════════════════════════════════════ */
+
+function validarColaborador(matricula) {
+  const u = _obterUsuario(matricula);
+  if (!u) return { liberado: false, pessoa: null, motivos: ['Matrícula não cadastrada'], alertas: [] };
+
+  const motivos = [];
+  const alertas = [];
+
+  // 1 · Status efetivo (já incorpora a cascata de contrato)
+  if (String(u.status_efetivo).toUpperCase() !== 'ATIVO') {
+    motivos.push(u.motivo_bloqueio_automatico || ('Colaborador com status ' + u.status_efetivo));
+  }
+
+  // 2 · Setor
+  const setorRow = _buscarLinha(CFG.ABAS.SETORES, CFG.COL_SETORES.id_setor, u.setor);
+  let setor = null;
+  if (setorRow) {
+    const cs = CFG.COL_SETORES;
+    setor = {
+      id_setor: setorRow.dados[cs.id_setor - 1],
+      nome_setor: setorRow.dados[cs.nome_setor - 1],
+      id_unidade: setorRow.dados[cs.id_unidade - 1],
+      id_gestor_responsavel: setorRow.dados[cs.id_gestor_responsavel - 1],
+      id_gestor_substituto: setorRow.dados[cs.id_gestor_substituto - 1],
+      nivel_criticidade: setorRow.dados[cs.nivel_criticidade - 1],
+      permite_terceirizado: String(setorRow.dados[cs.permite_terceirizado - 1]).toUpperCase()
+    };
+    if (u.tipo_vinculo === 'TERCEIRIZADO' && setor.permite_terceirizado === 'NÃO') {
+      motivos.push('Setor ' + setor.nome_setor + ' não permite terceirizados');
+    }
+  } else {
+    motivos.push('Setor não cadastrado: ' + u.setor);
+  }
+
+  // 3 · Contratada (bloqueio em cascata)
+  if (u.tipo_vinculo === 'TERCEIRIZADO') {
+    const empRow = _buscarLinha(CFG.ABAS.EMPRESAS, CFG.COL_EMPRESAS.id_empresa, u.empresa);
+    if (!empRow) {
+      motivos.push('Empresa contratada não cadastrada: ' + u.empresa);
+    } else {
+      const ce = CFG.COL_EMPRESAS;
+      const statusContrato = String(empRow.dados[ce.status_contrato - 1]).toUpperCase();
+      const statusDoc = String(empRow.dados[ce.status_documentacao - 1]).toUpperCase();
+      if (statusContrato !== 'VIGENTE') {
+        motivos.push('Contrato ' + empRow.dados[ce.numero_contrato - 1] + ' · ' + statusContrato);
+      }
+      if (statusDoc !== 'REGULAR') {
+        motivos.push('Documentação da contratada · ' + statusDoc);
+      }
+      const setoresOk = _listar(empRow.dados[ce.setores_autorizados - 1]);
+      if (setoresOk.length && setoresOk.indexOf(String(u.setor)) === -1) {
+        motivos.push('Contratada não autorizada no setor ' + u.setor);
+      }
+    }
+  }
+
+  // 4 · NRs obrigatórias
+  const funcRow = _buscarLinha(CFG.ABAS.FUNCOES, CFG.COL_FUNCOES.id_funcao, u.funcao);
+  let funcao = null;
+  if (funcRow) {
+    const cf = CFG.COL_FUNCOES;
+    funcao = {
+      id_funcao: funcRow.dados[cf.id_funcao - 1],
+      nome_funcao: funcRow.dados[cf.nome_funcao - 1],
+      epis_obrigatorios: _listar(funcRow.dados[cf.epis_obrigatorios - 1]),
+      epis_condicionais: _listar(funcRow.dados[cf.epis_condicionais - 1]),
+      nrs_obrigatorias: _listar(funcRow.dados[cf.nrs_obrigatorias - 1]),
+      grau_exposicao_risco: funcRow.dados[cf.grau_exposicao_risco - 1],
+      limite_horas_extras_mes: Number(funcRow.dados[cf.limite_horas_extras_mes - 1]) || 40,
+      elegivel_gamificacao: String(funcRow.dados[cf.elegivel_gamificacao - 1]).toUpperCase()
+    };
+
+    const treinos = _lerTudo(CFG.ABAS.TREINAMENTOS);
+    const ct = CFG.COL_TREINAMENTOS;
+    const alvo = String(matricula).trim().toUpperCase();
+
+    funcao.nrs_obrigatorias.forEach(function (nr) {
+      let vencimento = null;
+      treinos.forEach(function (t) {
+        if (String(t[ct.matricula - 1]).trim().toUpperCase() === alvo &&
+            String(t[ct.norma - 1]).trim().toUpperCase() === nr.toUpperCase() &&
+            String(t[ct.status - 1]).toUpperCase() !== 'CANCELADO') {
+          const d = t[ct.data_vencimento - 1];
+          if (d && (!vencimento || new Date(d) > new Date(vencimento))) vencimento = d;
+        }
+      });
+
+      if (!vencimento) { motivos.push(nr + ' · treinamento não registrado'); return; }
+      const dias = _diasAte(vencimento);
+      if (dias < 0)        motivos.push(nr + ' · vencida há ' + Math.abs(dias) + ' dias');
+      else if (dias <= 30) alertas.push(nr + ' · vence em ' + dias + ' dias');
+    });
+  } else {
+    motivos.push('Função não cadastrada: ' + u.funcao);
+  }
+
+  return {
+    liberado: motivos.length === 0,
+    pessoa: u, setor: setor, funcao: funcao,
+    motivos: motivos, alertas: alertas
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 6 · API DO TOTEM
+   Resposta binária. O totem NUNCA recebe fadiga, saúde ou preditivo
+   (Dossiê 3.3.1). O nível hierárquico é irrelevante aqui — de propósito:
+   um diretor no totem recebe exatamente o mesmo payload que um operador.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_ValidarTotem(matricula, idTotem) {
+  // Freio de enumeração: mesmo com token válido, um tablet comprometido não
+  // deve conseguir varrer o cadastro inteiro. Estoura o limite → recusa seca,
+  // sem consultar a planilha e sem poluir o log de auditoria.
+  if (!_totemDentroDoLimite(idTotem)) {
+    return {
+      status: 'BLOQUEADO',
+      nome: '—',
+      motivos: ['Muitas consultas neste totem. Aguarde alguns instantes.']
+    };
+  }
+
+  const v = validarColaborador(matricula);
+
+  if (!v.pessoa) {
+    registrarLog({
+      matricula_usuario: 'SISTEMA', acao_realizada: 'BLOQUEIO_ATIVIDADE',
+      tabela_afetada: CFG.ABAS.FUNCIONARIOS, id_registro_afetado: matricula,
+      origem_acao: 'TOTEM', id_dispositivo: idTotem || 'TOTEM',
+      resultado: 'NEGADO_REGRA', criticidade: 'AVISO',
+      justificativa: 'Matrícula não cadastrada'
+    });
+    return { status: 'BLOQUEADO', nome: '—', motivos: ['Crachá não reconhecido'] };
+  }
+
+  registrarLog({
+    matricula_usuario: v.pessoa.matricula,
+    perfil_rbac_no_momento: v.pessoa.perfil_rbac,
+    nivel_hierarquico_no_momento: v.pessoa.nivel_hierarquico,
+    acao_realizada: v.liberado ? 'LOGIN' : 'BLOQUEIO_ATIVIDADE',
+    tabela_afetada: CFG.ABAS.FUNCIONARIOS, id_registro_afetado: v.pessoa.matricula,
+    origem_acao: 'TOTEM', id_dispositivo: idTotem || 'TOTEM',
+    resultado: v.liberado ? 'SUCESSO' : 'NEGADO_REGRA',
+    criticidade: v.liberado ? 'INFO' : 'CRITICO',
+    justificativa: v.motivos.join(' | ')
+  });
+
+  return {
+    status: v.liberado ? 'LIBERADO' : 'BLOQUEADO',
+    matricula: v.pessoa.matricula,
+    nome: v.pessoa.nome_completo,
+    funcao: v.funcao ? v.funcao.nome_funcao : '',
+    setor: v.setor ? v.setor.nome_setor : '',
+    tipo_vinculo: v.pessoa.tipo_vinculo,
+    motivos: v.motivos,
+    alertas: v.alertas,
+    epis: v.liberado ? _listarEpisDevidos(v.funcao) : []
+  };
+}
+
+function _listarEpisDevidos(funcao) {
+  if (!funcao) return [];
+  const ce = CFG.COL_EQUIPAMENTOS;
+  const catalogo = _lerTudo(CFG.ABAS.EQUIPAMENTOS);
+
+  const alvos = []
+    .concat(funcao.epis_obrigatorios.map(function (c) { return { cod: c, exig: 'OBRIGATÓRIO' }; }))
+    .concat(funcao.epis_condicionais.map(function (c) { return { cod: c, exig: 'CONDICIONAL' }; }));
+
+  return alvos.map(function (alvo) {
+    const linha = catalogo.filter(function (e) {
+      return String(e[ce.codigo_epi - 1]).trim().toUpperCase() === alvo.cod.toUpperCase();
+    })[0];
+    if (!linha) return null;
+
+    const statusCA = String(linha[ce.status_ca - 1]).toUpperCase();
+    const estoque = Number(linha[ce.estoque_atual - 1]) || 0;
+    const bloqueios = [];
+
+    if (statusCA === 'VENCIDO') bloqueios.push('CA ' + linha[ce.numero_ca - 1] + ' vencido');
+    if (String(linha[ce.status_item - 1]).toUpperCase() === 'DESCONTINUADO') bloqueios.push('Item descontinuado');
+    if (estoque <= 0) bloqueios.push('Sem estoque');
+
+    return {
+      codigo_epi: linha[ce.codigo_epi - 1],
+      nome: linha[ce.nome - 1],
+      numero_ca: linha[ce.numero_ca - 1],
+      status_ca: statusCA,
+      vida_util_dias: Number(linha[ce.vida_util_dias - 1]) || 0,
+      estoque_atual: estoque,
+      custo_unitario: Number(linha[ce.custo_unitario - 1]) || 0,
+      exigencia: alvo.exig,
+      bloqueios: bloqueios,
+      liberavel: bloqueios.length === 0
+    };
+  }).filter(function (e) { return e !== null; });
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 7 · ENTREGA DE EPI (append-only)
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_RegistrarEntregaEPI(params) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const matricula = params.matricula;
+    const codigoEpi = params.codigo_epi;
+    const tipo = String(params.tipo_movimentacao || 'ENTREGA').toUpperCase();
+    const motivo = String(params.motivo_troca || 'N/A').toUpperCase();
+    const idTotem = params.id_totem || 'TOTEM';
+    const responsavel = params.responsavel_almox;
+
+    // Trava 1 · operador com perfil de escrita.
+    // Nota: nível hierárquico NÃO substitui perfil. Um DIRETORIA com perfil
+    // GESTOR continua sem poder dar baixa em estoque.
+    const operador = _obterUsuario(responsavel);
+    if (!operador || CFG.PERFIS_ALMOXARIFADO.indexOf(operador.perfil_rbac) === -1) {
+      _gravarLogSemTrava({
+        matricula_usuario: responsavel, acao_realizada: 'ENTREGA_EPI',
+        perfil_rbac_no_momento: operador ? operador.perfil_rbac : '',
+        nivel_hierarquico_no_momento: operador ? operador.nivel_hierarquico : '',
+        tabela_afetada: CFG.ABAS.MOVIMENTACOES, origem_acao: 'TOTEM',
+        id_dispositivo: idTotem, resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+        justificativa: 'Operador sem permissão de almoxarifado'
+      });
+      return { ok: false, erro: 'Operador sem permissão para registrar entregas.' };
+    }
+
+    // Trava 2 · conformidade do colaborador
+    const v = validarColaborador(matricula);
+    if (!v.liberado) {
+      _gravarLogSemTrava({
+        matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
+        nivel_hierarquico_no_momento: operador.nivel_hierarquico,
+        acao_realizada: 'BLOQUEIO_ATIVIDADE', tabela_afetada: CFG.ABAS.MOVIMENTACOES,
+        id_registro_afetado: matricula, origem_acao: 'TOTEM', id_dispositivo: idTotem,
+        resultado: 'NEGADO_REGRA', criticidade: 'CRITICO',
+        justificativa: v.motivos.join(' | ')
+      });
+      return { ok: false, erro: 'Entrega bloqueada.', motivos: v.motivos };
+    }
+
+    // Trava 3 · NR-06, CA e estoque
+    const eqRow = _buscarLinha(CFG.ABAS.EQUIPAMENTOS, CFG.COL_EQUIPAMENTOS.codigo_epi, codigoEpi);
+    if (!eqRow) return { ok: false, erro: 'EPI não cadastrado: ' + codigoEpi };
+
+    const ce = CFG.COL_EQUIPAMENTOS;
+    const statusCA = String(eqRow.dados[ce.status_ca - 1]).toUpperCase();
+    const estoque = Number(eqRow.dados[ce.estoque_atual - 1]) || 0;
+    const vidaUtil = Number(eqRow.dados[ce.vida_util_dias - 1]) || 0;
+    const numeroCA = eqRow.dados[ce.numero_ca - 1];
+
+    if (statusCA === 'VENCIDO') {
+      _gravarLogSemTrava({
+        matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
+        nivel_hierarquico_no_momento: operador.nivel_hierarquico,
+        acao_realizada: 'BLOQUEIO_ATIVIDADE', tabela_afetada: CFG.ABAS.EQUIPAMENTOS,
+        id_registro_afetado: codigoEpi, origem_acao: 'TOTEM', id_dispositivo: idTotem,
+        resultado: 'NEGADO_REGRA', criticidade: 'CRITICO',
+        justificativa: 'NR-06: CA ' + numeroCA + ' vencido'
+      });
+      return { ok: false, erro: 'NR-06: o CA ' + numeroCA + ' está vencido. Entrega proibida.' };
+    }
+    if (estoque <= 0) return { ok: false, erro: 'Sem estoque disponível para ' + codigoEpi + '.' };
+    if (tipo === 'TROCA' && motivo === 'N/A') return { ok: false, erro: 'Informe o motivo da troca.' };
+
+    // Gravação
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    const agora = new Date();
+    const seq = sh.getLastRow();
+    const idMov = 'MOV-' +
+      Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+      ('0000' + seq).slice(-4);
+    const validade = new Date(agora.getTime() + vidaUtil * 86400000);
+    const cm = CFG.COL_MOVIMENTACOES;
+
+    const linha = [];
+    linha[cm.id_movimentacao - 1] = idMov;
+    linha[cm.data_hora - 1] = agora;
+    linha[cm.matricula - 1] = v.pessoa.matricula;
+    linha[cm.codigo_epi - 1] = codigoEpi;
+    linha[cm.tipo_movimentacao - 1] = tipo;
+    linha[cm.quantidade - 1] = Number(params.quantidade) || 1;
+    linha[cm.motivo_troca - 1] = motivo;
+    linha[cm.ca_no_momento - 1] = numeroCA;       // snapshot de auditoria
+    linha[cm.lote - 1] = params.lote || '';
+    linha[cm.data_validade_calculada - 1] = validade;
+    linha[cm.status_confirmacao_totem - 1] = 'PENDENTE';
+    linha[cm.id_totem - 1] = idTotem;
+    linha[cm.responsavel_almox - 1] = responsavel;
+    linha[cm.observacao - 1] = params.observacao || '';
+
+    for (let i = 0; i < cm.hash_registro; i++) if (linha[i] === undefined) linha[i] = '';
+    linha[cm.hash_registro - 1] = _sha256(linha.join('|'));
+    sh.appendRow(linha);
+
+    // Log na MESMA transação — versão sem trava, o lock já é nosso
+    _gravarLogSemTrava({
+      matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
+      nivel_hierarquico_no_momento: operador.nivel_hierarquico,
+      acao_realizada: tipo === 'TROCA' ? 'TROCA_EPI' : 'ENTREGA_EPI',
+      tabela_afetada: CFG.ABAS.MOVIMENTACOES, id_registro_afetado: idMov,
+      origem_acao: 'TOTEM', id_dispositivo: idTotem, resultado: 'SUCESSO',
+      valor_novo: JSON.stringify({
+        matricula: v.pessoa.matricula, codigo_epi: codigoEpi,
+        ca: numeroCA, status: 'PENDENTE'
+      })
+    });
+
+    return {
+      ok: true, id_movimentacao: idMov, nome: v.pessoa.nome_completo,
+      epi: eqRow.dados[ce.nome - 1], validade: _formatarData(validade),
+      status_confirmacao_totem: 'PENDENTE'
+    };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function api_ConfirmarRecebimento(idMovimentacao, metodo, matriculaConfirmante) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const r = _buscarLinha(CFG.ABAS.MOVIMENTACOES,
+                           CFG.COL_MOVIMENTACOES.id_movimentacao, idMovimentacao);
+    if (!r) return { ok: false, erro: 'Movimentação não encontrada.' };
+
+    const cm = CFG.COL_MOVIMENTACOES;
+    const statusAtual = String(r.dados[cm.status_confirmacao_totem - 1]).toUpperCase();
+    if (statusAtual !== 'PENDENTE') {
+      return { ok: false, erro: 'Esta movimentação já está como ' + statusAtual + '.' };
+    }
+
+    // Ninguém confirma pelo outro — nem MASTER_ADMIN.
+    // Assumir responsabilidade por EPI é ato pessoal, não privilégio.
+    const dono = String(r.dados[cm.matricula - 1]).trim().toUpperCase();
+    if (dono !== String(matriculaConfirmante).trim().toUpperCase()) {
+      _gravarLogSemTrava({
+        matricula_usuario: matriculaConfirmante, acao_realizada: 'ENTREGA_EPI',
+        tabela_afetada: CFG.ABAS.MOVIMENTACOES, id_registro_afetado: idMovimentacao,
+        origem_acao: 'TOTEM', resultado: 'NEGADO_REGRA', criticidade: 'CRITICO',
+        justificativa: 'Tentativa de confirmar recebimento de terceiro'
+      });
+      return { ok: false, erro: 'A confirmação precisa ser feita pelo próprio colaborador.' };
+    }
+
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    const ultimaCol = sh.getLastColumn();
+    const linhaCompleta = sh.getRange(r.linha, 1, 1, ultimaCol).getValues()[0];
+    linhaCompleta[cm.status_confirmacao_totem - 1] = 'CONFIRMADO';
+    linhaCompleta[cm.metodo_confirmacao - 1] = metodo;
+    linhaCompleta[cm.timestamp_confirmacao - 1] = new Date();
+    sh.getRange(r.linha, 1, 1, ultimaCol).setValues([linhaCompleta]);
+
+    const conf = _obterUsuario(matriculaConfirmante);
+    _gravarLogSemTrava({
+      matricula_usuario: matriculaConfirmante,
+      perfil_rbac_no_momento: conf ? conf.perfil_rbac : '',
+      nivel_hierarquico_no_momento: conf ? conf.nivel_hierarquico : '',
+      acao_realizada: 'ENTREGA_EPI', tabela_afetada: CFG.ABAS.MOVIMENTACOES,
+      id_registro_afetado: idMovimentacao, origem_acao: 'TOTEM',
+      id_dispositivo: r.dados[cm.id_totem - 1], resultado: 'SUCESSO', criticidade: 'INFO',
+      valor_anterior: JSON.stringify({ status: 'PENDENTE' }),
+      valor_novo: JSON.stringify({ status: 'CONFIRMADO', metodo_confirmacao: metodo })
+    });
+
+    return { ok: true, id_movimentacao: idMovimentacao, status: 'CONFIRMADO' };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Correção sem apagar: cria linha de ESTORNO apontando para a original. */
+function api_EstornarMovimentacao(idMovimentacao, justificativa, matriculaSolicitante) {
+  const solicitante = _exigirAcesso(matriculaSolicitante, {
+    perfis: CFG.PERFIS_INVESTIGACAO, contexto: 'ESTORNO_MOVIMENTACAO'
+  });
+
+  if (!justificativa || String(justificativa).trim().length < 10) {
+    return { ok: false, erro: 'Justificativa obrigatória (mínimo 10 caracteres).' };
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const r = _buscarLinha(CFG.ABAS.MOVIMENTACOES,
+                           CFG.COL_MOVIMENTACOES.id_movimentacao, idMovimentacao);
+    if (!r) return { ok: false, erro: 'Movimentação não encontrada.' };
+
+    const cm = CFG.COL_MOVIMENTACOES;
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    const agora = new Date();
+    const seq = sh.getLastRow();
+    const idEstorno = 'MOV-' +
+      Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+      ('0000' + seq).slice(-4);
+
+    const linha = [];
+    linha[cm.id_movimentacao - 1] = idEstorno;
+    linha[cm.data_hora - 1] = agora;
+    linha[cm.matricula - 1] = r.dados[cm.matricula - 1];
+    linha[cm.codigo_epi - 1] = r.dados[cm.codigo_epi - 1];
+    linha[cm.tipo_movimentacao - 1] = 'ESTORNO';
+    linha[cm.quantidade - 1] = r.dados[cm.quantidade - 1];
+    linha[cm.motivo_troca - 1] = 'N/A';
+    linha[cm.ca_no_momento - 1] = r.dados[cm.ca_no_momento - 1];
+    linha[cm.status_confirmacao_totem - 1] = 'CONFIRMADO';
+    linha[cm.id_totem - 1] = r.dados[cm.id_totem - 1];
+    linha[cm.responsavel_almox - 1] = solicitante.matricula;
+    linha[cm.observacao - 1] = justificativa;
+    linha[cm.id_movimentacao_estornada - 1] = idMovimentacao;
+
+    for (let i = 0; i < cm.hash_registro; i++) if (linha[i] === undefined) linha[i] = '';
+    linha[cm.hash_registro - 1] = _sha256(linha.join('|'));
+    sh.appendRow(linha);
+
+    _gravarLogSemTrava({
+      matricula_usuario: solicitante.matricula,
+      perfil_rbac_no_momento: solicitante.perfil_rbac,
+      nivel_hierarquico_no_momento: solicitante.nivel_hierarquico,
+      acao_realizada: 'ESTORNO', tabela_afetada: CFG.ABAS.MOVIMENTACOES,
+      id_registro_afetado: idEstorno, origem_acao: 'WEB_DESKTOP',
+      resultado: 'SUCESSO', criticidade: 'AVISO', justificativa: justificativa,
+      valor_anterior: JSON.stringify({ estornando: idMovimentacao })
+    });
+
+    return { ok: true, id_estorno: idEstorno, estornou: idMovimentacao };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 7-B · REGISTRO DE AÇÃO PREVENTIVA (fadiga / quase-acidente)
+
+   Assinatura esperada pelo Frontend:
+     google.script.run.api_RegistrarAcaoPreventiva(idFuncionario)
+
+   Identidade do solicitante — REGRA DE NEGÓCIO:
+     O login NÃO exige e-mail do Google Workspace como condição obrigatória.
+     Aceitamos, em ordem de prioridade:
+       1) matriculaSolicitante passada explicitamente (Totem / Ponto)
+       2) Session.getActiveUser().getEmail() casando com Funcionarios
+       3) e-mail alternativo em params.loginEmail (formato legado)
+     Se nenhum dos três casar com um cadastro ATIVO, devolvemos
+     autenticado:false — nunca inferimos identidade.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_RegistrarAcaoPreventiva(idFuncionario, params) {
+  params = params || {};
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    // 1) Resolve o solicitante sem assumir Workspace.
+    const solicitante = _resolverSolicitante(params);
+    if (!solicitante.ok) return solicitante.resposta;
+
+    const u = solicitante.usuario;
+
+    // 2) Trava operacional — só quem pode agir sobre pessoas registra ação.
+    //    Funcionário comum (sem GESTOR/SST/ADMIN) NUNCA registra para terceiro.
+    if (CFG.PERFIS_SENSIVEIS.indexOf(u.perfil_rbac) === -1) {
+      _gravarLogSemTrava({
+        matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+        nivel_hierarquico_no_momento: u.nivel_hierarquico,
+        acao_realizada: 'REGISTRO_ACAO_PREVENTIVA',
+        tabela_afetada: CFG.ABAS.ACOES_PREVENTIVAS,
+        id_registro_afetado: idFuncionario, origem_acao: solicitante.origem,
+        resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+        justificativa: 'Perfil ' + u.perfil_rbac + ' sem permissão para registrar ação preventiva'
+      });
+      return { ok: false, erro: 'Perfil sem permissão para registrar ação preventiva.' };
+    }
+
+    // 3) Validação do alvo — matrícula precisa existir e estar ATIVO.
+    const alvo = _obterUsuario(idFuncionario);
+    if (!alvo) {
+      _gravarLogSemTrava({
+        matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+        nivel_hierarquico_no_momento: u.nivel_hierarquico,
+        acao_realizada: 'REGISTRO_ACAO_PREVENTIVA',
+        tabela_afetada: CFG.ABAS.FUNCIONARIOS, id_registro_afetado: idFuncionario,
+        origem_acao: solicitante.origem, resultado: 'NEGADO_REGRA', criticidade: 'AVISO',
+        justificativa: 'Alvo não cadastrado: ' + idFuncionario
+      });
+      return { ok: false, erro: 'Funcionário-alvo não cadastrado.' };
+    }
+    if (String(alvo.status_efetivo).toUpperCase() !== 'ATIVO') {
+      return { ok: false, erro: 'Funcionário-alvo com status ' + alvo.status_efetivo + '.' };
+    }
+
+    // 4) Escopo — gestor setorial só age nos próprios setores; global ignora.
+    const escopo = _resolverEscopo(u);
+    const idsSetores = escopo.ids_setores;
+    if (escopo.tipo === 'SETORIAL' && idsSetores.indexOf(String(alvo.setor)) === -1) {
+      _gravarLogSemTrava({
+        matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+        nivel_hierarquico_no_momento: u.nivel_hierarquico,
+        acao_realizada: 'REGISTRO_ACAO_PREVENTIVA',
+        tabela_afetada: CFG.ABAS.ACOES_PREVENTIVAS, id_registro_afetado: idFuncionario,
+        origem_acao: solicitante.origem, resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+        justificativa: 'Alvo fora do escopo setorial do solicitante'
+      });
+      return { ok: false, erro: 'Funcionário fora do seu escopo de gestão.' };
+    }
+
+    // 5) Gravação — append-only em Acoes_Preventivas.
+    const sh = _aba(CFG.ABAS.ACOES_PREVENTIVAS);
+    const agora = new Date();
+    const seq = sh.getLastRow();
+    const idAcao = 'AP-' +
+      Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+      ('0000' + seq).slice(-4);
+
+    const cap = CFG.COL_ACOES_PREVENTIVAS;
+    const idLog = _gravarLogSemTrava({
+      matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+      nivel_hierarquico_no_momento: u.nivel_hierarquico,
+      acao_realizada: 'REGISTRO_ACAO_PREVENTIVA',
+      tabela_afetada: CFG.ABAS.ACOES_PREVENTIVAS, id_registro_afetado: idAcao,
+      origem_acao: solicitante.origem, resultado: 'SUCESSO', criticidade: 'INFO',
+      valor_novo: JSON.stringify({
+        alvo_matricula: alvo.matricula, alerta: params.alerta || '',
+        recomendacao: params.recomendacao || ''
+      })
+    });
+
+    const linha = [];
+    linha[cap.id_acao - 1] = idAcao;
+    linha[cap.timestamp - 1] = agora;
+    linha[cap.matricula_alvo - 1] = alvo.matricula;
+    linha[cap.nome_alvo_snapshot - 1] = alvo.nome_completo;
+    linha[cap.matricula_solicitante - 1] = u.matricula;
+    linha[cap.perfil_rbac_solicitante - 1] = u.perfil_rbac;
+    linha[cap.nivel_hierarquico_solicitante - 1] = u.nivel_hierarquico;
+    linha[cap.origem_identificacao - 1] = solicitante.origem;
+    linha[cap.alerta_disparo - 1] = params.alerta || '';
+    linha[cap.recomendacao_registrada - 1] = params.recomendacao || '';
+    linha[cap.status_acao - 1] = 'REGISTRADA';
+    linha[cap.observacoes - 1] = params.observacoes || '';
+    linha[cap.id_log - 1] = idLog;
+
+    for (let i = 0; i < cap.id_log; i++) if (linha[i] === undefined) linha[i] = '';
+    sh.appendRow(linha);
+
+    return {
+      ok: true,
+      id_acao: idAcao,
+      id_log: idLog,
+      matricula_alvo: alvo.matricula,
+      nome_alvo: alvo.nome_completo,
+      status: 'REGISTRADA',
+      identificacao_origem: solicitante.origem
+    };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Resolve quem está chamando, sem pressupor Workspace.
+ *
+ * Tenta, em ordem:
+ *   1) params.matriculaSolicitante  — caminho Totem/Ponto
+ *   2) Session.getActiveUser()      — caminho Web Desktop
+ *   3) params.loginEmail            — fallback explícito (legado/migração)
+ *
+ * Se nenhum casar, devolve { ok:false, resposta:{ autenticado:false, ... } }.
+ * Esta função NÃO chama registrarLog — quem chama decide o que registrar.
+ */
+function _resolverSolicitante(params) {
+  const tentativas = [];
+
+  const matriculaParam = String(params.matriculaSolicitante || '').trim();
+  if (matriculaParam) tentativas.push({ tipo: 'MATRICULA_EXPLICITA', valor: matriculaParam });
+
+  let emailSessao = '';
+  try {
+    emailSessao = Session.getActiveUser().getEmail() || '';
+  } catch (e) { emailSessao = ''; }
+  if (emailSessao) tentativas.push({ tipo: 'SESSAO_GOOGLE_WORKSPACE', valor: emailSessao });
+
+  const emailParam = String(params.loginEmail || '').trim().toLowerCase();
+  if (emailParam && emailParam !== emailSessao.toLowerCase()) {
+    tentativas.push({ tipo: 'EMAIL_FALLBACK', valor: emailParam });
+  }
+
+  for (let i = 0; i < tentativas.length; i++) {
+    const t = tentativas[i];
+    let u = null;
+
+    if (t.tipo === 'MATRICULA_EXPLICITA') {
+      u = _obterUsuario(t.valor);
+    } else {
+      // E-mail — varre Funcionarios procurando email_corporativo igual.
+      const c = CFG.COL_FUNCIONARIOS;
+      const alvo = t.valor.toLowerCase();
+      const dados = _lerTudo(CFG.ABAS.FUNCIONARIOS);
+      for (let j = 0; j < dados.length; j++) {
+        if (String(dados[j][c.email_corporativo - 1] || '').trim().toLowerCase() === alvo) {
+          u = _obterUsuario(dados[j][c.matricula - 1]);
+          break;
+        }
+      }
+    }
+
+    if (u && String(u.status_efetivo).toUpperCase() === 'ATIVO') {
+      return { ok: true, usuario: u, origem: t.tipo };
+    }
+  }
+
+  // Nenhuma rota bateu com cadastro ATIVO.
+  return {
+    ok: false,
+    resposta: {
+      autenticado: false,
+      erro: 'Não foi possível identificar o solicitante. ' +
+            'Informe matrícula ou use uma conta com cadastro ativo no sistema.'
+    }
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 8 · GOVERNANÇA MASTER_ADMIN
+   Ações de parametrização sistêmica. Exigem ADMIN + MASTER_ADMIN e sempre
+   geram log CRITICO — quem tudo pode precisa deixar rastro de tudo.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_AlterarNivelHierarquico(matriculaAlvo, novoNivel, justificativa, matriculaSolicitante) {
+  const solicitante = _exigirAcesso(matriculaSolicitante, {
+    perfis: ['ADMIN'], nivelMinimo: 'MASTER_ADMIN', contexto: 'ALTERACAO_NIVEL_HIERARQUICO'
+  });
+
+  if (!CFG.HIERARQUIA[novoNivel]) return { ok: false, erro: 'Nível inexistente: ' + novoNivel };
+  if (!justificativa || String(justificativa).trim().length < 10) {
+    return { ok: false, erro: 'Justificativa obrigatória (mínimo 10 caracteres).' };
+  }
+
+  const alvo = _obterUsuario(matriculaAlvo);
+  if (!alvo) return { ok: false, erro: 'Matrícula não cadastrada: ' + matriculaAlvo };
+
+  const combinacoesOk = CFG.COMBINACOES_VALIDAS[novoNivel] || [];
+  if (combinacoesOk.indexOf(alvo.perfil_rbac) === -1) {
+    return {
+      ok: false,
+      erro: 'Combinação inválida: perfil ' + alvo.perfil_rbac +
+            ' não pode ter nível ' + novoNivel + '. Permitidos: ' + combinacoesOk.join(', ') + '.'
+    };
+  }
+
+  // Trava anti-lockout: a planta não pode ficar sem MASTER_ADMIN
+  if (alvo.nivel_hierarquico === 'MASTER_ADMIN' && novoNivel !== 'MASTER_ADMIN') {
+    if (_contarMasterAdmins() <= 1) {
+      return { ok: false, erro: 'Operação negada: este é o único MASTER_ADMIN ativo.' };
+    }
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+  try {
+    _aba(CFG.ABAS.FUNCIONARIOS)
+      .getRange(alvo.linha, CFG.COL_FUNCIONARIOS.nivel_hierarquico)
+      .setValue(novoNivel);
+
+    _gravarLogSemTrava({
+      matricula_usuario: solicitante.matricula,
+      perfil_rbac_no_momento: solicitante.perfil_rbac,
+      nivel_hierarquico_no_momento: solicitante.nivel_hierarquico,
+      acao_realizada: 'ALTERACAO_PERMISSAO', tabela_afetada: CFG.ABAS.FUNCIONARIOS,
+      id_registro_afetado: matriculaAlvo, origem_acao: 'WEB_DESKTOP',
+      resultado: 'SUCESSO', criticidade: 'CRITICO', justificativa: justificativa,
+      valor_anterior: JSON.stringify({ nivel_hierarquico: alvo.nivel_hierarquico }),
+      valor_novo: JSON.stringify({ nivel_hierarquico: novoNivel })
+    });
+
+    return { ok: true, matricula: matriculaAlvo, nivel_anterior: alvo.nivel_hierarquico, nivel_novo: novoNivel };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _contarMasterAdmins() {
+  const c = CFG.COL_FUNCIONARIOS;
+  return _lerTudo(CFG.ABAS.FUNCIONARIOS).filter(function (f) {
+    return String(f[c.nivel_hierarquico - 1]).toUpperCase() === 'MASTER_ADMIN' &&
+           String(f[c.status_efetivo - 1] || f[c.status - 1]).toUpperCase() === 'ATIVO';
+  }).length;
+}
+
+/** Auditoria da matriz de permissões. Roda a base inteira e aponta desvios. */
+function api_AuditarMatrizPermissoes(matriculaSolicitante) {
+  _exigirAcesso(matriculaSolicitante, {
+    perfis: ['ADMIN', 'SST'], nivelMinimo: 'DIRETORIA', contexto: 'AUDITORIA_PERMISSOES'
+  });
+
+  const c = CFG.COL_FUNCIONARIOS;
+  const inconsistencias = [];
+
+  _lerTudo(CFG.ABAS.FUNCIONARIOS).forEach(function (f) {
+    const mat = f[c.matricula - 1];
+    if (!mat) return;
+
+    const perfil = String(f[c.perfil_rbac - 1]).toUpperCase();
+    const nivel = String(f[c.nivel_hierarquico - 1] || '').toUpperCase();
+    const vinculo = String(f[c.tipo_vinculo - 1]).toUpperCase();
+
+    if (!nivel) {
+      inconsistencias.push(mat + ': nível hierárquico em branco.');
+    } else if (!CFG.HIERARQUIA[nivel]) {
+      inconsistencias.push(mat + ': nível "' + nivel + '" não existe.');
+    } else if ((CFG.COMBINACOES_VALIDAS[nivel] || []).indexOf(perfil) === -1) {
+      inconsistencias.push(mat + ': combinação inválida ' + perfil + ' + ' + nivel + '.');
+    }
+
+    if (vinculo === 'TERCEIRIZADO' && perfil !== 'TERCEIRIZADO') {
+      inconsistencias.push(mat + ': terceirizado com perfil ' + perfil + '.');
+    }
+    if (vinculo === 'TERCEIRIZADO' && nivel !== 'OPERACIONAL') {
+      inconsistencias.push(mat + ': terceirizado com nível ' + nivel + '.');
+    }
+  });
+
+  const masters = _contarMasterAdmins();
+  if (masters === 0) inconsistencias.push('CRÍTICO: nenhum MASTER_ADMIN ativo na base.');
+  if (masters > 3)   inconsistencias.push('ATENÇÃO: ' + masters + ' MASTER_ADMIN ativos. Revisar.');
+
+  return { conforme: inconsistencias.length === 0, master_admins_ativos: masters, inconsistencias: inconsistencias };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 8-B · CONTEXTO DE USUÁRIO PARA O FRONT-END
+
+   obterContextoUsuario() é a ÚNICA função pensada para expor dados de
+   Funcionarios diretamente ao front. Por isso ela usa lista branca de
+   campos — nunca "return usuario inteiro" — para impedir que uma coluna
+   sensível nova (senha_hash, salt, id_biometrico, CPF) vaze por descuido
+   no dia em que alguém adicionar uma coluna ao schema.
+
+   O front usa isto para decidir o que RENDERIZAR (RBAC visual/cosmético).
+   Isso não substitui nenhuma trava de servidor: toda API sensível
+   (api_DashboardGestor, api_PainelDiretoria, api_EstornarMovimentacao...)
+   continua validando por conta própria via _exigirAcesso.
+═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ASSINATURA CANÔNICA: obterContextoUsuario(matriculaSolicitante)
+ *
+ * O parâmetro é o mesmo `matriculaSolicitante` que todas as api_* da Sala 1
+ * exigem (api_DashboardGestor, api_PainelDiretoria, api_EstornarMovimentacao...).
+ * Manter o nome igual não é preciosismo: é o que permite ao front guardar UMA
+ * variável de identidade e repassá-la a todas as chamadas sem tradução.
+ *
+ * Chamar SEM argumento é legítimo e tem significado próprio: quer dizer
+ * "me identifique pela sessão do Google Workspace" — o caminho desktop do
+ * modelo híbrido homologado. Só o Totem e o Relógio de Ponto passam matrícula
+ * explícita, porque rodam em dispositivo compartilhado, onde
+ * Session.getActiveUser() devolve vazio por desenho do Google.
+ *
+ * O que NÃO acontece aqui: adivinhar identidade. Sem matrícula e sem sessão
+ * válida, devolve autenticado:false. Nunca "assume o primeiro da planilha".
+ */
+function obterContextoUsuario(matriculaSolicitante) {
+  const matricula = String(matriculaSolicitante || '').trim();
+
+  // Sem matrícula explícita → caminho desktop (sessão Google Workspace).
+  if (!matricula) return obterContextoUsuarioSessao();
+
+  const u = _obterUsuario(matricula);
+
+  if (!u) {
+    registrarLog({
+      matricula_usuario: matricula,
+      acao_realizada: 'LOGIN_FALHOU', tabela_afetada: CFG.ABAS.FUNCIONARIOS,
+      id_registro_afetado: matricula, origem_acao: 'TOTEM',
+      resultado: 'ERRO', criticidade: 'AVISO',
+      justificativa: 'Matrícula não encontrada ao carregar contexto'
+    });
+    return { autenticado: false, erro: 'Matrícula não encontrada.' };
+  }
+
+  return _montarContexto(u, 'MATRICULA_EXPLICITA');
+}
+
+/**
+ * MODELO HÍBRIDO — metade administrativa.
+ * Usa a identidade da sessão do Google Workspace. NUNCA chamar isto a
+ * partir do Totem ou do Relógio de Ponto: em dispositivo compartilhado,
+ * ou com implantação "Qualquer pessoa", getActiveUser() devolve string
+ * vazia por desenho de privacidade do Google — não é bug para contornar.
+ *
+ * Se o e-mail vier vazio ou não bater com nenhum cadastro, devolve
+ * autenticado:false com uma mensagem que já orienta o usuário, em vez
+ * de estourar erro cru no front.
+ */
+function obterContextoUsuarioSessao() {
+  let email;
+  try {
+    email = Session.getActiveUser().getEmail();
+  } catch (erro) {
+    email = '';
+  }
+
+  if (!email) {
+    registrarLog({
+      matricula_usuario: 'DESCONHECIDO', acao_realizada: 'LOGIN_FALHOU',
+      tabela_afetada: CFG.ABAS.FUNCIONARIOS, origem_acao: 'WEB_DESKTOP',
+      resultado: 'ERRO', criticidade: 'AVISO',
+      justificativa: 'Session.getActiveUser().getEmail() vazio — verificar ' +
+                     'configuração de implantação (deve ser "usuário que acessa" ' +
+                     '+ acesso restrito ao domínio)'
+    });
+    return {
+      autenticado: false,
+      erro: 'Não foi possível identificar sua conta Google. Confirme que está ' +
+            'logado com o e-mail corporativo e que a implantação do app ' +
+            'está restrita ao domínio da empresa.'
+    };
+  }
+
+  const u = _obterUsuarioPorEmail(email);
+  if (!u) {
+    registrarLog({
+      matricula_usuario: 'DESCONHECIDO', acao_realizada: 'LOGIN_FALHOU',
+      tabela_afetada: CFG.ABAS.FUNCIONARIOS, origem_acao: 'WEB_DESKTOP',
+      resultado: 'ERRO', criticidade: 'AVISO',
+      justificativa: 'E-mail de sessão sem cadastro correspondente: ' + email
+    });
+    return {
+      autenticado: false,
+      erro: 'Sua conta (' + email + ') não está vinculada a nenhum cadastro ' +
+            'de funcionário. Contate o Admin para preencher o e-mail corporativo.'
+    };
+  }
+
+  return _montarContexto(u, 'SESSAO_GOOGLE_WORKSPACE');
+}
+
+/**
+ * Núcleo compartilhado pelas duas entradas. Fica em função própria para
+ * a lista branca de campos existir em UM lugar só — nunca duplicada.
+ */
+function _montarContexto(u, origemIdentificacao) {
+  if (String(u.status_efetivo).toUpperCase() !== 'ATIVO') {
+    registrarLog({
+      matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+      nivel_hierarquico_no_momento: u.nivel_hierarquico,
+      acao_realizada: 'LOGIN_FALHOU', tabela_afetada: CFG.ABAS.FUNCIONARIOS,
+      id_registro_afetado: u.matricula, origem_acao: 'WEB_DESKTOP',
+      resultado: 'NEGADO_REGRA', criticidade: 'AVISO',
+      justificativa: 'Contexto solicitado por usuário ' + u.status_efetivo +
+                     ' (origem: ' + origemIdentificacao + ')'
+    });
+    return {
+      autenticado: false,
+      erro: 'Acesso bloqueado: ' + (u.motivo_bloqueio_automatico || u.status_efetivo)
+    };
+  }
+
+  const escopo = _resolverEscopo(u);
+  const h = CFG.HIERARQUIA[u.nivel_hierarquico];
+
+  const permissoes = {
+    // Perfil operacional (Dossiê 6.4) — o que a pessoa pode FAZER
+    ve_dashboard_gestor: CFG.PERFIS_SENSIVEIS.indexOf(u.perfil_rbac) !== -1,
+    opera_totem: CFG.PERFIS_ALMOXARIFADO.indexOf(u.perfil_rbac) !== -1,
+    abre_investigacao_rca: CFG.PERFIS_INVESTIGACAO.indexOf(u.perfil_rbac) !== -1,
+    estorna_movimentacao: CFG.PERFIS_INVESTIGACAO.indexOf(u.perfil_rbac) !== -1,
+    participa_gamificacao: u.tipo_vinculo === 'NATIVO',
+
+    // Nível hierárquico — SOBRE QUEM ela enxerga
+    escopo_visao: escopo.tipo,                              // PROPRIO / SETORIAL / GLOBAL
+    ve_dado_nominal_sensivel: escopo.ve_dado_nominal_sensivel, // fadiga com nome
+    ve_painel_diretoria: h.peso >= CFG.HIERARQUIA.DIRETORIA.peso,
+    altera_nivel_hierarquico: u.perfil_rbac === 'ADMIN' &&
+                               u.nivel_hierarquico === 'MASTER_ADMIN'
+  };
+
+  // Aviso visível ao front quando o cadastro está inconsistente —
+  // o usuário foi rebaixado automaticamente e precisa de correção manual.
+  const avisos = [];
+  if (u.nivel_rebaixado_por_inconsistencia) {
+    avisos.push('Combinação de perfil e nível inválida no cadastro. ' +
+                'Acesso temporariamente restringido ao nível ' + u.nivel_hierarquico +
+                '. Contate o Admin.');
+  }
+
+  registrarLog({
+    matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+    nivel_hierarquico_no_momento: u.nivel_hierarquico,
+    acao_realizada: 'LOGIN', tabela_afetada: CFG.ABAS.FUNCIONARIOS,
+    id_registro_afetado: u.matricula, origem_acao: 'WEB_DESKTOP', resultado: 'SUCESSO'
+  });
+
+  // ── LISTA BRANCA ── nada além disto sai para o front.
+  return {
+    autenticado: true,
+    matricula: u.matricula,
+    nome_completo: u.nome_completo,
+    tipo_vinculo: u.tipo_vinculo,
+    setor: u.setor,
+    funcao: u.funcao,
+    perfil_rbac: u.perfil_rbac,
+    nivel_hierarquico: u.nivel_hierarquico,
+    permissoes: permissoes,
+    setores_visiveis: escopo.setores,   // já filtrados pelo escopo do usuário
+    avisos: avisos,
+    versao_sistema: CFG.VERSAO,
+    origem_identificacao: origemIdentificacao   // útil para debug em produção
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 9 · PUBLICAÇÃO WEB
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* Configuração do totem. Os tokens ficam em Script Properties, gerados por
+   setup_GerarTokensTotem(). Nunca na planilha, nunca no HTML. */
+const CFG_TOTEM = {
+  CHAVE_PROPS: 'TOTEM_TOKENS',   // Script Property com o JSON {idTotem: token}
+  LIMITE_POR_MIN: 30,            // consultas/minuto por totem
+  JANELA_SEG: 60
+};
+
+function doGet(e) {
+  // Híbrido: SPA corporativo (Index) para gestores/admin/diretoria,
+  // Totem separado para kiosk de validação de crachá.
+  // As telas Ponto/Gestor/Diretoria nunca existiram como HTMLs separados —
+  // o Index é um SPA que decide sozinho o que mostrar via obterContextoUsuario().
+  const params = (e && e.parameter) || {};
+  const tela = params.tela || 'index';
+
+  if (tela === 'totem') {
+    // Totem é anônimo por natureza (não há sessão Google no kiosk), então a
+    // autorização vem do token na URL. Sem isso, qualquer pessoa com o link
+    // /exec?tela=totem consultaria o cadastro inteiro por força bruta.
+    const idTotem = params.id || params.totem || '';
+    if (!_totemAutorizado(idTotem, params.token || '')) {
+      return HtmlService.createHtmlOutput(
+        '<div style="font:600 18px system-ui;padding:48px;text-align:center;color:#7a1210">' +
+        'Dispositivo não autorizado.<br>' +
+        '<span style="font-weight:400;font-size:14px;color:#666">' +
+        'Solicite ao SST a URL correta deste totem.</span></div>'
+      ).setTitle('EHS — Acesso negado');
+    }
+
+    return HtmlService.createTemplateFromFile('Totem')
+      .evaluate()
+      .setTitle('EHS — Totem de Validação')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('EHS Smart Enterprise — Painel Corporativo')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Confere id + token contra o mapa em Script Properties.
+ * Retorna false para qualquer coisa fora do esperado — sem exceção, sem log ruidoso
+ * (varredura de URL não deve conseguir encher o log de auditoria).
+ */
+function _totemAutorizado(idTotem, token) {
+  if (!idTotem || !token) return false;
+
+  const bruto = PropertiesService.getScriptProperties().getProperty(CFG_TOTEM.CHAVE_PROPS);
+  if (!bruto) return false;
+
+  let mapa;
+  try { mapa = JSON.parse(bruto); } catch (_) { return false; }
+
+  const esperado = mapa[idTotem];
+  return !!esperado && esperado === token;
+}
+
+/**
+ * Contador de janela deslizante em CacheService. Retorna false quando o totem
+ * passou de CFG_TOTEM.LIMITE_POR_MIN consultas na janela corrente.
+ *
+ * O cache é best-effort (pode ser esvaziado pelo Google a qualquer momento).
+ * Isso é aceitável: o objetivo é frear varredura automatizada, não contabilizar
+ * com precisão. Falha do cache nunca bloqueia o operador legítimo.
+ */
+function _totemDentroDoLimite(idTotem) {
+  const cache = CacheService.getScriptCache();
+  const chave = 'rt_totem_' + (idTotem || 'DESCONHECIDO');
+
+  const atual = Number(cache.get(chave) || 0);
+  if (atual >= CFG_TOTEM.LIMITE_POR_MIN) return false;
+
+  cache.put(chave, String(atual + 1), CFG_TOTEM.JANELA_SEG);
+  return true;
+}
+
+function incluir(nomeArquivo) {
+  return HtmlService.createHtmlOutputFromFile(nomeArquivo).getContent();
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 10 · MARCO DE VERSÃO
+   Substitui um "commit": grava na auditoria imutável que a v2.0 entrou
+   em produção, quem autorizou e quando. Rode UMA vez, manualmente,
+   depois de validar TESTE_ImplantacaoCompleta().
+═══════════════════════════════════════════════════════════════════════════ */
+
+function registrarMigracaoVersao(matriculaResponsavel, observacao) {
+  const u = _exigirAcesso(matriculaResponsavel, {
+    perfis: ['ADMIN'], nivelMinimo: 'MASTER_ADMIN', contexto: 'MIGRACAO_VERSAO'
+  });
+
+  const idLog = registrarLog({
+    matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+    nivel_hierarquico_no_momento: u.nivel_hierarquico,
+    acao_realizada: 'AJUSTE_PARAMETRO', tabela_afetada: 'SISTEMA',
+    id_registro_afetado: 'VERSAO_' + CFG.VERSAO, origem_acao: 'WEB_DESKTOP',
+    resultado: 'SUCESSO', criticidade: 'CRITICO',
+    justificativa: 'Entrada em produção da versão ' + CFG.VERSAO +
+                   ' (RBAC bidimensional: perfil_rbac + nivel_hierarquico). ' +
+                   (observacao || '')
+  });
+
+  return { ok: true, versao: CFG.VERSAO, id_log_marco: idLog, autorizado_por: u.matricula };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⚠ MIGRAÇÃO v1.x → v2.0 · três alterações de schema
+
+   1) Funcionarios · coluna W  → nivel_hierarquico
+      Validação de dados: OPERACIONAL / GESTOR / DIRETORIA / MASTER_ADMIN
+      Preencha TODAS as linhas. Vazio cai para o nível mais restritivo.
+
+   2) Funcionarios · coluna X  → unidades_visiveis
+      Lista "UNI-01;UNI-02". Vazio = todas as unidades do nível.
+      Só faz sentido para DIRETORIA e MASTER_ADMIN.
+
+   3) Log_Auditoria · coluna S → nivel_hierarquico_no_momento
+      ATENÇÃO: acrescentar coluna ao log muda o conteúdo das linhas novas.
+      A corrente de hash das linhas ANTIGAS permanece válida, mas o
+      verificador passa a comparar 19 colunas. Rode verificarIntegridadeLog()
+      ANTES da migração e guarde o resultado como marco zero.
+═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UTILITÁRIO · CABEÇALHOS DA ABA ACOES_PREVENTIVAS
+   Rode UMA vez após criar a aba "Acoes_Preventivas" na planilha.
+═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Preenche a primeira linha da aba Acoes_Preventivas com os cabeçalhos
+ * definidos em CFG.COL_ACOES_PREVENTIVAS, na ordem exata das 14 colunas.
+ *
+ * Retorna { ok: true, cabecalhos: [...] } ou { ok: false, erro: "..." }.
+ */
+function util_SetupCabecalhosPrevencao() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.ABAS.ACOES_PREVENTIVAS);
+  if (!sh) {
+    return { ok: false, erro: 'Aba "' + CFG.ABAS.ACOES_PREVENTIVAS + '" não encontrada. Crie a aba antes de rodar.' };
+  }
+
+  const cap = CFG.COL_ACOES_PREVENTIVAS;
+  const cabecalhos = new Array(14);
+
+  cabecalhos[cap.id_acao - 1] = 'id_acao';
+  cabecalhos[cap.timestamp - 1] = 'timestamp';
+  cabecalhos[cap.matricula_alvo - 1] = 'matricula_alvo';
+  cabecalhos[cap.nome_alvo_snapshot - 1] = 'nome_alvo_snapshot';
+  cabecalhos[cap.matricula_solicitante - 1] = 'matricula_solicitante';
+  cabecalhos[cap.perfil_rbac_solicitante - 1] = 'perfil_rbac_solicitante';
+  cabecalhos[cap.nivel_hierarquico_solicitante - 1] = 'nivel_hierarquico_solicitante';
+  cabecalhos[cap.origem_identificacao - 1] = 'origem_identificacao';
+  cabecalhos[cap.alerta_disparo - 1] = 'alerta_disparo';
+  cabecalhos[cap.recomendacao_registrada - 1] = 'recomendacao_registrada';
+  cabecalhos[cap.status_acao - 1] = 'status_acao';
+  cabecalhos[cap.data_conclusao - 1] = 'data_conclusao';
+  cabecalhos[cap.observacoes - 1] = 'observacoes';
+  cabecalhos[cap.id_log - 1] = 'id_log';
+
+  sh.getRange(1, 1, 1, cabecalhos.length).setValues([cabecalhos]).setFontWeight('bold').setBackground('#f3f4f6');
+  sh.setFrozenRows(1);
+
+  return { ok: true, cabecalhos: cabecalhos };
+}

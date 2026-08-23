@@ -1,0 +1,821 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EHS SMART ENTERPRISE · Code.gs
+ * Camada de infraestrutura: leitura da base, auditoria imutável, RBAC
+ * e API operacional do Totem / Relógio de Ponto.
+ *
+ * ONDE COLAR: Planilha → Extensões → Apps Script → arquivo "Code.gs"
+ * Este arquivo e o Motor_Regras.gs vivem no MESMO projeto (namespace único).
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 1 · CONFIGURAÇÃO
+   Mapa de abas e posição das colunas (1 = coluna A).
+   Se você inserir uma coluna na planilha, ATUALIZE AQUI. É o único lugar.
+═══════════════════════════════════════════════════════════════════════════ */
+
+const CFG = {
+
+  ABAS: {
+    FUNCIONARIOS: 'Funcionarios',
+    EQUIPAMENTOS: 'Equipamentos_EPI_EPC',
+    MOVIMENTACOES: 'Movimentacoes_Trocas',
+    LOG: 'Log_Auditoria',
+    GAMIFICACAO: 'Gamificacao_Mentoria',
+    SETORES: 'Setores',
+    FUNCOES: 'Funcoes',
+    EMPRESAS: 'Empresas_Terceiras',
+    TREINAMENTOS: 'Treinamentos',   // ⚠ aba nova — ver nota no fim do arquivo
+    JORNADA: 'Jornada_Consolidada'  // ⚠ aba nova — insumo do motor de fadiga
+  },
+
+  COL_FUNCIONARIOS: {
+    matricula: 1, nome_completo: 2, cpf: 3, tipo_vinculo: 4, empresa: 5,
+    setor: 6, funcao: 7, perfil_rbac: 8, senha_hash: 9, salt: 10,
+    id_gestor: 11, cartao_rfid: 12, id_biometrico: 13, data_admissao: 14,
+    data_fim_contrato: 15, status: 16, motivo_bloqueio: 17, criado_em: 18,
+    atualizado_em: 19, atualizado_por: 20,
+    status_efetivo: 21, motivo_bloqueio_automatico: 22
+  },
+
+  COL_EQUIPAMENTOS: {
+    codigo_epi: 1, nome: 2, categoria: 3, grupo_protecao: 4, fabricante: 5,
+    numero_ca: 6, validade_ca: 7, status_ca: 8, vida_util_dias: 9,
+    exige_higienizacao: 10, periodicidade_higien_dias: 11, unidade_medida: 12,
+    estoque_atual: 13, ponto_pedido: 14, estoque_seguranca: 15,
+    status_estoque: 16, custo_unitario: 17, localizacao_almox: 18,
+    nrs_associadas: 19, status_item: 20
+  },
+
+  COL_MOVIMENTACOES: {
+    id_movimentacao: 1, data_hora: 2, matricula: 3, codigo_epi: 4,
+    tipo_movimentacao: 5, quantidade: 6, motivo_troca: 7, ca_no_momento: 8,
+    lote: 9, data_validade_calculada: 10, dias_uso_efetivo: 11,
+    perc_vida_util_aproveitada: 12, status_confirmacao_totem: 13,
+    metodo_confirmacao: 14, timestamp_confirmacao: 15, id_totem: 16,
+    responsavel_almox: 17, observacao: 18, id_movimentacao_estornada: 19,
+    impacto_gamificacao: 20, hash_registro: 21
+  },
+
+  COL_LOG: {
+    id_log: 1, timestamp: 2, matricula_usuario: 3, perfil_rbac_no_momento: 4,
+    acao_realizada: 5, tabela_afetada: 6, id_registro_afetado: 7,
+    valor_anterior: 8, valor_novo: 9, justificativa: 10, origem_acao: 11,
+    id_dispositivo: 12, endereco_ip: 13, resultado: 14, criticidade: 15,
+    hash_registro: 16, hash_anterior: 17, sequencia: 18
+  },
+
+  COL_SETORES: {
+    id_setor: 1, nome_setor: 2, centro_custo: 3, id_unidade: 4,
+    id_gestor_responsavel: 5, id_gestor_substituto: 6, nivel_criticidade: 7,
+    nrs_aplicaveis: 8, exige_liberacao_previa: 9, permite_terceirizado: 10,
+    descricao_riscos: 11, status: 12
+  },
+
+  COL_FUNCOES: {
+    id_funcao: 1, nome_funcao: 2, id_setor_vinculado: 3, cbo: 4,
+    epis_obrigatorios: 5, epis_condicionais: 6, nrs_obrigatorias: 7,
+    treinamentos_obrigatorios: 8, atividades_criticas_permitidas: 9,
+    exige_aso_especifico: 10, grau_exposicao_risco: 11,
+    limite_horas_extras_mes: 12, elegivel_gamificacao: 13, status: 14
+  },
+
+  COL_EMPRESAS: {
+    id_empresa: 1, cnpj: 2, razao_social: 3, nome_fantasia: 4,
+    numero_contrato: 5, objeto_contrato: 6, data_inicio_contrato: 7,
+    data_fim_contrato: 8, contrato_vigente: 9, status_contrato: 10,
+    status_documentacao: 11, pgr_entregue: 12, pcmso_entregue: 13,
+    validade_documentacao: 14, responsavel_tecnico: 15, contato_email: 16,
+    contato_telefone: 17, setores_autorizados: 18, fornece_proprio_epi: 19,
+    qtd_colaboradores_ativos: 20, status: 21
+  },
+
+  COL_TREINAMENTOS: {
+    id_treinamento: 1, matricula: 2, norma: 3, carga_horaria: 4,
+    data_realizacao: 5, data_vencimento: 6, instrutor: 7,
+    numero_certificado: 8, status: 9
+  },
+
+  COL_JORNADA: {
+    matricula: 1, data_referencia: 2, horas_extras_mes: 3,
+    turnos_consecutivos: 4, intervalo_min_horas: 5,
+    atividades_criticas_7d: 6, ocorrencias_recentes: 7
+  },
+
+  /** Perfis autorizados a ver dados sensíveis (fadiga, RCA, auditoria) */
+  PERFIS_SENSIVEIS: ['GESTOR', 'SST', 'ADMIN'],
+
+  /** Horas até uma entrega PENDENTE virar EXPIRADO */
+  HORAS_EXPIRACAO_CONFIRMACAO: 24,
+
+  /** Tempo máximo de espera pelo lock, em milissegundos */
+  TIMEOUT_LOCK: 20000
+};
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 2 · LEITURA DA BASE
+   Funções genéricas. Todo o resto do sistema lê a planilha por aqui.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function _aba(nome) {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nome);
+  if (!sh) throw new Error('Aba não encontrada: ' + nome);
+  return sh;
+}
+
+/** Lê todos os dados de uma aba (sem o cabeçalho) como matriz. */
+function _lerTudo(nomeAba) {
+  const sh = _aba(nomeAba);
+  const ultimaLinha = sh.getLastRow();
+  if (ultimaLinha < 2) return [];
+  return sh.getRange(2, 1, ultimaLinha - 1, sh.getLastColumn()).getValues();
+}
+
+/** Localiza a primeira linha cujo valor da coluna informada bate com a chave. */
+function _buscarLinha(nomeAba, coluna, chave) {
+  const dados = _lerTudo(nomeAba);
+  const alvo = String(chave).trim().toUpperCase();
+  for (let i = 0; i < dados.length; i++) {
+    if (String(dados[i][coluna - 1]).trim().toUpperCase() === alvo) {
+      return { linha: i + 2, dados: dados[i] };   // +2: cabeçalho + índice zero
+    }
+  }
+  return null;
+}
+
+/** Converte "NR-06;NR-10" em ['NR-06','NR-10']. Tolera vazio e espaços. */
+function _listar(texto) {
+  if (!texto) return [];
+  return String(texto).split(';').map(function (t) { return t.trim(); })
+                      .filter(function (t) { return t !== ''; });
+}
+
+/** Diferença em dias inteiros entre uma data e hoje. Negativo = vencido. */
+function _diasAte(data) {
+  if (!data) return null;
+  const d = (data instanceof Date) ? data : new Date(data);
+  if (isNaN(d.getTime())) return null;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  return Math.round((d - hoje) / 86400000);
+}
+
+function _formatarData(d) {
+  if (!d) return '';
+  return Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 3 · AUDITORIA IMUTÁVEL
+   Cada linha do log carrega o hash da linha anterior. Isso forma uma corrente:
+   alterar ou apagar uma linha invalida todas as seguintes.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function _sha256(texto) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, texto, Utilities.Charset.UTF_8);
+  return bytes.map(function (b) {
+    return ('0' + (b & 0xFF).toString(16)).slice(-2);
+  }).join('');
+}
+
+/**
+ * Versão PÚBLICA: pega o lock antes de gravar.
+ * Use quando o log for a única escrita da operação.
+ */
+function registrarLog(evento) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+  try {
+    return _gravarLogSemTrava(evento);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Versão INTERNA: NÃO pega o lock.
+ * Use quando a função chamadora JÁ está segurando o lock — caso contrário
+ * o script trava esperando um lock que ele mesmo detém (deadlock).
+ */
+function _gravarLogSemTrava(evento) {
+  const sh = _aba(CFG.ABAS.LOG);
+  const ultimaLinha = sh.getLastRow();
+  const sequencia = ultimaLinha;  // linha 1 = cabeçalho, então linha 2 = seq 1
+
+  // Recupera o hash da linha anterior para encadear
+  let hashAnterior = '0'.repeat(64);
+  if (ultimaLinha >= 2) {
+    const anterior = sh.getRange(ultimaLinha, CFG.COL_LOG.hash_registro).getValue();
+    if (anterior) hashAnterior = String(anterior);
+  }
+
+  const agora = new Date();
+  const idLog = 'LOG-' +
+    Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+    ('000000' + sequencia).slice(-6);
+
+  const linha = [
+    idLog,
+    agora,
+    evento.matricula_usuario || 'SISTEMA',
+    evento.perfil_rbac_no_momento || 'SISTEMA',
+    evento.acao_realizada,
+    evento.tabela_afetada || '',
+    evento.id_registro_afetado || '',
+    evento.valor_anterior || '',
+    evento.valor_novo || '',
+    evento.justificativa || '',
+    evento.origem_acao || 'MOTOR_REGRAS',
+    evento.id_dispositivo || 'SERVIDOR',
+    evento.endereco_ip || '',
+    evento.resultado || 'SUCESSO',
+    evento.criticidade || 'INFO',
+    '',              // hash_registro — preenchido logo abaixo
+    hashAnterior,
+    sequencia
+  ];
+
+  // O hash cobre o conteúdo da linha E o hash anterior
+  linha[CFG.COL_LOG.hash_registro - 1] = _sha256(linha.join('|'));
+
+  sh.appendRow(linha);
+  return idLog;
+}
+
+/**
+ * Percorre a corrente de hash e devolve o resultado da verificação.
+ * Rode manualmente ou por gatilho diário (ver Motor_Regras.gs).
+ */
+function verificarIntegridadeLog() {
+  const dados = _lerTudo(CFG.ABAS.LOG);
+  const problemas = [];
+  let hashEsperado = '0'.repeat(64);
+
+  for (let i = 0; i < dados.length; i++) {
+    const linha = dados[i].slice(0, 18);
+    const numeroLinha = i + 2;
+
+    if (String(linha[CFG.COL_LOG.hash_anterior - 1]) !== hashEsperado) {
+      problemas.push('Linha ' + numeroLinha + ': corrente rompida (hash anterior não confere).');
+    }
+    if (Number(linha[CFG.COL_LOG.sequencia - 1]) !== i + 1) {
+      problemas.push('Linha ' + numeroLinha + ': lacuna na sequência — registro apagado.');
+    }
+
+    const hashGravado = String(linha[CFG.COL_LOG.hash_registro - 1]);
+    const copia = linha.slice();
+    copia[CFG.COL_LOG.hash_registro - 1] = '';
+    if (_sha256(copia.join('|')) !== hashGravado) {
+      problemas.push('Linha ' + numeroLinha + ': conteúdo alterado após a gravação.');
+    }
+    hashEsperado = hashGravado;
+  }
+
+  return {
+    integro: problemas.length === 0,
+    total_registros: dados.length,
+    problemas: problemas
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 4 · RBAC — CONTROLE DE ACESSO NO SERVIDOR
+   O front-end esconde por conforto. Aqui é onde de fato se nega.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function _obterUsuario(matricula) {
+  const r = _buscarLinha(CFG.ABAS.FUNCIONARIOS, CFG.COL_FUNCIONARIOS.matricula, matricula);
+  if (!r) return null;
+  const c = CFG.COL_FUNCIONARIOS;
+  return {
+    matricula: r.dados[c.matricula - 1],
+    nome_completo: r.dados[c.nome_completo - 1],
+    tipo_vinculo: r.dados[c.tipo_vinculo - 1],
+    empresa: r.dados[c.empresa - 1],
+    setor: r.dados[c.setor - 1],
+    funcao: r.dados[c.funcao - 1],
+    perfil_rbac: String(r.dados[c.perfil_rbac - 1] || '').toUpperCase(),
+    id_gestor: r.dados[c.id_gestor - 1],
+    data_fim_contrato: r.dados[c.data_fim_contrato - 1],
+    status: r.dados[c.status - 1],
+    // status_efetivo é a fórmula. É ELE que o sistema obedece, não a coluna status.
+    status_efetivo: r.dados[c.status_efetivo - 1] || r.dados[c.status - 1],
+    motivo_bloqueio_automatico: r.dados[c.motivo_bloqueio_automatico - 1] ||
+                                r.dados[c.motivo_bloqueio - 1] || '',
+    linha: r.linha
+  };
+}
+
+/**
+ * Porteiro central. Toda função sensível chama isto ANTES de ler dado.
+ * Se negar, o próprio ato de tentar já vira registro de auditoria.
+ */
+function _exigirPerfil(matriculaSolicitante, perfisPermitidos, contexto) {
+  const u = _obterUsuario(matriculaSolicitante);
+
+  if (!u) {
+    registrarLog({
+      matricula_usuario: matriculaSolicitante, acao_realizada: 'CONSULTA_SENSIVEL',
+      tabela_afetada: contexto, resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+      justificativa: 'Matrícula não cadastrada'
+    });
+    throw new Error('Acesso negado: usuário não identificado.');
+  }
+
+  if (perfisPermitidos.indexOf(u.perfil_rbac) === -1) {
+    registrarLog({
+      matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+      acao_realizada: 'CONSULTA_SENSIVEL', tabela_afetada: contexto,
+      resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+      justificativa: 'Perfil ' + u.perfil_rbac + ' sem permissão para ' + contexto
+    });
+    throw new Error('Acesso negado: o perfil ' + u.perfil_rbac +
+                    ' não tem permissão para acessar ' + contexto + '.');
+  }
+
+  return u;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 5 · MOTOR DE CONFORMIDADE
+   Valida vínculo, contrato da contratada, setor autorizado e NRs.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function validarColaborador(matricula) {
+  const u = _obterUsuario(matricula);
+  if (!u) {
+    return { liberado: false, pessoa: null, motivos: ['Matrícula não cadastrada'], alertas: [] };
+  }
+
+  const motivos = [];
+  const alertas = [];
+
+  // 1 · Status efetivo (já incorpora a cascata de contrato via fórmula)
+  if (String(u.status_efetivo).toUpperCase() !== 'ATIVO') {
+    motivos.push(u.motivo_bloqueio_automatico ||
+                 ('Colaborador com status ' + u.status_efetivo));
+  }
+
+  // 2 · Setor e permissão de terceirizado
+  const setorRow = _buscarLinha(CFG.ABAS.SETORES, CFG.COL_SETORES.id_setor, u.setor);
+  let setor = null;
+  if (setorRow) {
+    const cs = CFG.COL_SETORES;
+    setor = {
+      id_setor: setorRow.dados[cs.id_setor - 1],
+      nome_setor: setorRow.dados[cs.nome_setor - 1],
+      id_gestor_responsavel: setorRow.dados[cs.id_gestor_responsavel - 1],
+      id_gestor_substituto: setorRow.dados[cs.id_gestor_substituto - 1],
+      nivel_criticidade: setorRow.dados[cs.nivel_criticidade - 1],
+      permite_terceirizado: String(setorRow.dados[cs.permite_terceirizado - 1]).toUpperCase()
+    };
+    if (u.tipo_vinculo === 'TERCEIRIZADO' && setor.permite_terceirizado === 'NÃO') {
+      motivos.push('Setor ' + setor.nome_setor + ' não permite terceirizados');
+    }
+  } else {
+    motivos.push('Setor não cadastrado: ' + u.setor);
+  }
+
+  // 3 · Empresa contratada (mensagem detalhada; a trava já veio do status_efetivo)
+  if (u.tipo_vinculo === 'TERCEIRIZADO') {
+    const empRow = _buscarLinha(CFG.ABAS.EMPRESAS, CFG.COL_EMPRESAS.id_empresa, u.empresa);
+    if (!empRow) {
+      motivos.push('Empresa contratada não cadastrada: ' + u.empresa);
+    } else {
+      const ce = CFG.COL_EMPRESAS;
+      const statusContrato = String(empRow.dados[ce.status_contrato - 1]).toUpperCase();
+      const statusDoc = String(empRow.dados[ce.status_documentacao - 1]).toUpperCase();
+      const contrato = empRow.dados[ce.numero_contrato - 1];
+      if (statusContrato !== 'VIGENTE') {
+        motivos.push('Contrato ' + contrato + ' · ' + statusContrato);
+      }
+      if (statusDoc !== 'REGULAR') {
+        motivos.push('Documentação da contratada · ' + statusDoc);
+      }
+      const setoresOk = _listar(empRow.dados[ce.setores_autorizados - 1]);
+      if (setoresOk.length && setoresOk.indexOf(String(u.setor)) === -1) {
+        motivos.push('Contratada não autorizada no setor ' + u.setor);
+      }
+    }
+  }
+
+  // 4 · NRs obrigatórias da função
+  const funcRow = _buscarLinha(CFG.ABAS.FUNCOES, CFG.COL_FUNCOES.id_funcao, u.funcao);
+  let funcao = null;
+  if (funcRow) {
+    const cf = CFG.COL_FUNCOES;
+    funcao = {
+      id_funcao: funcRow.dados[cf.id_funcao - 1],
+      nome_funcao: funcRow.dados[cf.nome_funcao - 1],
+      epis_obrigatorios: _listar(funcRow.dados[cf.epis_obrigatorios - 1]),
+      epis_condicionais: _listar(funcRow.dados[cf.epis_condicionais - 1]),
+      nrs_obrigatorias: _listar(funcRow.dados[cf.nrs_obrigatorias - 1]),
+      grau_exposicao_risco: funcRow.dados[cf.grau_exposicao_risco - 1],
+      limite_horas_extras_mes: Number(funcRow.dados[cf.limite_horas_extras_mes - 1]) || 40,
+      elegivel_gamificacao: String(funcRow.dados[cf.elegivel_gamificacao - 1]).toUpperCase()
+    };
+
+    const treinos = _lerTudo(CFG.ABAS.TREINAMENTOS);
+    const ct = CFG.COL_TREINAMENTOS;
+
+    funcao.nrs_obrigatorias.forEach(function (nr) {
+      // Considera o vencimento MAIS DISTANTE — a reciclagem mais recente
+      let vencimento = null;
+      treinos.forEach(function (t) {
+        if (String(t[ct.matricula - 1]).trim().toUpperCase() === String(matricula).trim().toUpperCase() &&
+            String(t[ct.norma - 1]).trim().toUpperCase() === nr.toUpperCase() &&
+            String(t[ct.status - 1]).toUpperCase() !== 'CANCELADO') {
+          const d = t[ct.data_vencimento - 1];
+          if (d && (!vencimento || new Date(d) > new Date(vencimento))) vencimento = d;
+        }
+      });
+
+      if (!vencimento) {
+        motivos.push(nr + ' · treinamento não registrado');
+        return;
+      }
+      const dias = _diasAte(vencimento);
+      if (dias < 0)       motivos.push(nr + ' · vencida há ' + Math.abs(dias) + ' dias');
+      else if (dias <= 30) alertas.push(nr + ' · vence em ' + dias + ' dias');
+    });
+  } else {
+    motivos.push('Função não cadastrada: ' + u.funcao);
+  }
+
+  return {
+    liberado: motivos.length === 0,
+    pessoa: u, setor: setor, funcao: funcao,
+    motivos: motivos, alertas: alertas
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 6 · API DO TOTEM
+   Resposta binária e enxuta. O totem NUNCA recebe dado de fadiga ou saúde
+   (Dossiê, seção 3.3.1). Só LIBERADO ou BLOQUEADO, com o motivo objetivo.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_ValidarTotem(matricula, idTotem) {
+  const v = validarColaborador(matricula);
+
+  if (!v.pessoa) {
+    registrarLog({
+      matricula_usuario: 'SISTEMA', acao_realizada: 'BLOQUEIO_ATIVIDADE',
+      tabela_afetada: CFG.ABAS.FUNCIONARIOS, id_registro_afetado: matricula,
+      origem_acao: 'TOTEM', id_dispositivo: idTotem || 'TOTEM',
+      resultado: 'NEGADO_REGRA', criticidade: 'AVISO',
+      justificativa: 'Matrícula não cadastrada'
+    });
+    return { status: 'BLOQUEADO', nome: '—', motivos: ['Crachá não reconhecido'] };
+  }
+
+  registrarLog({
+    matricula_usuario: v.pessoa.matricula,
+    perfil_rbac_no_momento: v.pessoa.perfil_rbac,
+    acao_realizada: v.liberado ? 'LOGIN' : 'BLOQUEIO_ATIVIDADE',
+    tabela_afetada: CFG.ABAS.FUNCIONARIOS, id_registro_afetado: v.pessoa.matricula,
+    origem_acao: 'TOTEM', id_dispositivo: idTotem || 'TOTEM',
+    resultado: v.liberado ? 'SUCESSO' : 'NEGADO_REGRA',
+    criticidade: v.liberado ? 'INFO' : 'CRITICO',
+    justificativa: v.motivos.join(' | ')
+  });
+
+  // Payload deliberadamente pobre: nada de saúde, fadiga ou histórico.
+  return {
+    status: v.liberado ? 'LIBERADO' : 'BLOQUEADO',
+    matricula: v.pessoa.matricula,
+    nome: v.pessoa.nome_completo,
+    funcao: v.funcao ? v.funcao.nome_funcao : '',
+    setor: v.setor ? v.setor.nome_setor : '',
+    tipo_vinculo: v.pessoa.tipo_vinculo,
+    motivos: v.motivos,
+    alertas: v.alertas,
+    epis: v.liberado ? _listarEpisDevidos(v.funcao) : []
+  };
+}
+
+function _listarEpisDevidos(funcao) {
+  if (!funcao) return [];
+  const ce = CFG.COL_EQUIPAMENTOS;
+  const catalogo = _lerTudo(CFG.ABAS.EQUIPAMENTOS);
+
+  const alvos = []
+    .concat(funcao.epis_obrigatorios.map(function (c) { return { cod: c, exig: 'OBRIGATÓRIO' }; }))
+    .concat(funcao.epis_condicionais.map(function (c) { return { cod: c, exig: 'CONDICIONAL' }; }));
+
+  return alvos.map(function (alvo) {
+    const linha = catalogo.filter(function (e) {
+      return String(e[ce.codigo_epi - 1]).trim().toUpperCase() === alvo.cod.toUpperCase();
+    })[0];
+    if (!linha) return null;
+
+    const statusCA = String(linha[ce.status_ca - 1]).toUpperCase();
+    const estoque = Number(linha[ce.estoque_atual - 1]) || 0;
+    const bloqueios = [];
+
+    if (statusCA === 'VENCIDO') bloqueios.push('CA ' + linha[ce.numero_ca - 1] + ' vencido');
+    if (String(linha[ce.status_item - 1]).toUpperCase() === 'DESCONTINUADO') bloqueios.push('Item descontinuado');
+    if (estoque <= 0) bloqueios.push('Sem estoque');
+
+    return {
+      codigo_epi: linha[ce.codigo_epi - 1],
+      nome: linha[ce.nome - 1],
+      numero_ca: linha[ce.numero_ca - 1],
+      status_ca: statusCA,
+      vida_util_dias: Number(linha[ce.vida_util_dias - 1]) || 0,
+      estoque_atual: estoque,
+      custo_unitario: Number(linha[ce.custo_unitario - 1]) || 0,
+      exigencia: alvo.exig,
+      bloqueios: bloqueios,
+      liberavel: bloqueios.length === 0
+    };
+  }).filter(function (e) { return e !== null; });
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 7 · ENTREGA DE EPI
+   Append-only: a linha nasce PENDENTE e só vira CONFIRMADO com ação ativa
+   do colaborador. Correções nunca apagam — geram ESTORNO.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_RegistrarEntregaEPI(params) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const matricula = params.matricula;
+    const codigoEpi = params.codigo_epi;
+    const tipo = String(params.tipo_movimentacao || 'ENTREGA').toUpperCase();
+    const motivo = String(params.motivo_troca || 'N/A').toUpperCase();
+    const idTotem = params.id_totem || 'TOTEM';
+    const responsavel = params.responsavel_almox;
+
+    // — Trava 1: quem opera o totem precisa ter perfil de escrita
+    const operador = _obterUsuario(responsavel);
+    if (!operador || ['FUNCIONARIO', 'SST', 'ADMIN'].indexOf(operador.perfil_rbac) === -1) {
+      _gravarLogSemTrava({
+        matricula_usuario: responsavel, acao_realizada: 'ENTREGA_EPI',
+        tabela_afetada: CFG.ABAS.MOVIMENTACOES, origem_acao: 'TOTEM',
+        id_dispositivo: idTotem, resultado: 'NEGADO_RBAC', criticidade: 'AVISO',
+        justificativa: 'Operador sem permissão de almoxarifado'
+      });
+      return { ok: false, erro: 'Operador sem permissão para registrar entregas.' };
+    }
+
+    // — Trava 2: conformidade do colaborador
+    const v = validarColaborador(matricula);
+    if (!v.liberado) {
+      _gravarLogSemTrava({
+        matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
+        acao_realizada: 'BLOQUEIO_ATIVIDADE', tabela_afetada: CFG.ABAS.MOVIMENTACOES,
+        id_registro_afetado: matricula, origem_acao: 'TOTEM', id_dispositivo: idTotem,
+        resultado: 'NEGADO_REGRA', criticidade: 'CRITICO',
+        justificativa: v.motivos.join(' | ')
+      });
+      return { ok: false, erro: 'Entrega bloqueada.', motivos: v.motivos };
+    }
+
+    // — Trava 3: NR-06, CA e estoque
+    const eqRow = _buscarLinha(CFG.ABAS.EQUIPAMENTOS, CFG.COL_EQUIPAMENTOS.codigo_epi, codigoEpi);
+    if (!eqRow) return { ok: false, erro: 'EPI não cadastrado: ' + codigoEpi };
+
+    const ce = CFG.COL_EQUIPAMENTOS;
+    const statusCA = String(eqRow.dados[ce.status_ca - 1]).toUpperCase();
+    const estoque = Number(eqRow.dados[ce.estoque_atual - 1]) || 0;
+    const vidaUtil = Number(eqRow.dados[ce.vida_util_dias - 1]) || 0;
+    const numeroCA = eqRow.dados[ce.numero_ca - 1];
+
+    if (statusCA === 'VENCIDO') {
+      _gravarLogSemTrava({
+        matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
+        acao_realizada: 'BLOQUEIO_ATIVIDADE', tabela_afetada: CFG.ABAS.EQUIPAMENTOS,
+        id_registro_afetado: codigoEpi, origem_acao: 'TOTEM', id_dispositivo: idTotem,
+        resultado: 'NEGADO_REGRA', criticidade: 'CRITICO',
+        justificativa: 'NR-06: CA ' + numeroCA + ' vencido'
+      });
+      return { ok: false, erro: 'NR-06: o CA ' + numeroCA + ' está vencido. Entrega proibida.' };
+    }
+    if (estoque <= 0) return { ok: false, erro: 'Sem estoque disponível para ' + codigoEpi + '.' };
+    if (tipo === 'TROCA' && motivo === 'N/A') {
+      return { ok: false, erro: 'Informe o motivo da troca.' };
+    }
+
+    // — Gravação append-only
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    const agora = new Date();
+    const seq = sh.getLastRow();
+    const idMov = 'MOV-' +
+      Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+      ('0000' + seq).slice(-4);
+
+    const validade = new Date(agora.getTime() + vidaUtil * 86400000);
+
+    const linha = [];
+    linha[CFG.COL_MOVIMENTACOES.id_movimentacao - 1] = idMov;
+    linha[CFG.COL_MOVIMENTACOES.data_hora - 1] = agora;
+    linha[CFG.COL_MOVIMENTACOES.matricula - 1] = v.pessoa.matricula;
+    linha[CFG.COL_MOVIMENTACOES.codigo_epi - 1] = codigoEpi;
+    linha[CFG.COL_MOVIMENTACOES.tipo_movimentacao - 1] = tipo;
+    linha[CFG.COL_MOVIMENTACOES.quantidade - 1] = Number(params.quantidade) || 1;
+    linha[CFG.COL_MOVIMENTACOES.motivo_troca - 1] = motivo;
+    linha[CFG.COL_MOVIMENTACOES.ca_no_momento - 1] = numeroCA;   // snapshot para auditoria
+    linha[CFG.COL_MOVIMENTACOES.lote - 1] = params.lote || '';
+    linha[CFG.COL_MOVIMENTACOES.data_validade_calculada - 1] = validade;
+    linha[CFG.COL_MOVIMENTACOES.status_confirmacao_totem - 1] = 'PENDENTE';
+    linha[CFG.COL_MOVIMENTACOES.id_totem - 1] = idTotem;
+    linha[CFG.COL_MOVIMENTACOES.responsavel_almox - 1] = responsavel;
+    linha[CFG.COL_MOVIMENTACOES.observacao - 1] = params.observacao || '';
+
+    // Colunas de fórmula ficam vazias: J, K, L e T são calculadas pela planilha.
+    for (let i = 0; i < CFG.COL_MOVIMENTACOES.hash_registro; i++) {
+      if (linha[i] === undefined) linha[i] = '';
+    }
+    linha[CFG.COL_MOVIMENTACOES.hash_registro - 1] = _sha256(linha.join('|'));
+
+    sh.appendRow(linha);
+
+    // Log na MESMA transação, usando a versão sem trava (o lock já é nosso)
+    _gravarLogSemTrava({
+      matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
+      acao_realizada: tipo === 'TROCA' ? 'TROCA_EPI' : 'ENTREGA_EPI',
+      tabela_afetada: CFG.ABAS.MOVIMENTACOES, id_registro_afetado: idMov,
+      origem_acao: 'TOTEM', id_dispositivo: idTotem, resultado: 'SUCESSO',
+      valor_novo: JSON.stringify({
+        matricula: v.pessoa.matricula, codigo_epi: codigoEpi,
+        ca: numeroCA, status: 'PENDENTE'
+      })
+    });
+
+    return {
+      ok: true, id_movimentacao: idMov,
+      nome: v.pessoa.nome_completo,
+      epi: eqRow.dados[ce.nome - 1],
+      validade: _formatarData(validade),
+      status_confirmacao_totem: 'PENDENTE'
+    };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Confirmação ativa do colaborador. Só aqui a responsabilidade se transfere. */
+function api_ConfirmarRecebimento(idMovimentacao, metodo, matriculaConfirmante) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const r = _buscarLinha(CFG.ABAS.MOVIMENTACOES,
+                           CFG.COL_MOVIMENTACOES.id_movimentacao, idMovimentacao);
+    if (!r) return { ok: false, erro: 'Movimentação não encontrada.' };
+
+    const cm = CFG.COL_MOVIMENTACOES;
+    const statusAtual = String(r.dados[cm.status_confirmacao_totem - 1]).toUpperCase();
+    if (statusAtual !== 'PENDENTE') {
+      return { ok: false, erro: 'Esta movimentação já está como ' + statusAtual + '.' };
+    }
+
+    // A confirmação tem que ser de quem recebeu — ninguém confirma pelo outro
+    const dono = String(r.dados[cm.matricula - 1]).trim().toUpperCase();
+    if (dono !== String(matriculaConfirmante).trim().toUpperCase()) {
+      _gravarLogSemTrava({
+        matricula_usuario: matriculaConfirmante, acao_realizada: 'ENTREGA_EPI',
+        tabela_afetada: CFG.ABAS.MOVIMENTACOES, id_registro_afetado: idMovimentacao,
+        origem_acao: 'TOTEM', resultado: 'NEGADO_REGRA', criticidade: 'CRITICO',
+        justificativa: 'Tentativa de confirmar recebimento de terceiro'
+      });
+      return { ok: false, erro: 'A confirmação precisa ser feita pelo próprio colaborador.' };
+    }
+
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    sh.getRange(r.linha, cm.status_confirmacao_totem).setValue('CONFIRMADO');
+    sh.getRange(r.linha, cm.metodo_confirmacao).setValue(metodo);
+    sh.getRange(r.linha, cm.timestamp_confirmacao).setValue(new Date());
+
+    _gravarLogSemTrava({
+      matricula_usuario: matriculaConfirmante, acao_realizada: 'ENTREGA_EPI',
+      tabela_afetada: CFG.ABAS.MOVIMENTACOES, id_registro_afetado: idMovimentacao,
+      origem_acao: 'TOTEM', id_dispositivo: r.dados[cm.id_totem - 1],
+      resultado: 'SUCESSO', criticidade: 'INFO',
+      valor_anterior: JSON.stringify({ status: 'PENDENTE' }),
+      valor_novo: JSON.stringify({ status: 'CONFIRMADO', metodo_confirmacao: metodo })
+    });
+
+    return { ok: true, id_movimentacao: idMovimentacao, status: 'CONFIRMADO' };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Correção de lançamento. NUNCA apaga a linha original:
+ * cria uma nova apontando para ela.
+ */
+function api_EstornarMovimentacao(idMovimentacao, justificativa, matriculaSolicitante) {
+  const solicitante = _exigirPerfil(matriculaSolicitante, ['SST', 'ADMIN'], 'ESTORNO_MOVIMENTACAO');
+  if (!justificativa || String(justificativa).trim().length < 10) {
+    return { ok: false, erro: 'Justificativa obrigatória (mínimo 10 caracteres).' };
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const r = _buscarLinha(CFG.ABAS.MOVIMENTACOES,
+                           CFG.COL_MOVIMENTACOES.id_movimentacao, idMovimentacao);
+    if (!r) return { ok: false, erro: 'Movimentação não encontrada.' };
+
+    const cm = CFG.COL_MOVIMENTACOES;
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    const agora = new Date();
+    const seq = sh.getLastRow();
+    const idEstorno = 'MOV-' +
+      Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
+      ('0000' + seq).slice(-4);
+
+    const linha = [];
+    linha[cm.id_movimentacao - 1] = idEstorno;
+    linha[cm.data_hora - 1] = agora;
+    linha[cm.matricula - 1] = r.dados[cm.matricula - 1];
+    linha[cm.codigo_epi - 1] = r.dados[cm.codigo_epi - 1];
+    linha[cm.tipo_movimentacao - 1] = 'ESTORNO';
+    linha[cm.quantidade - 1] = r.dados[cm.quantidade - 1];
+    linha[cm.motivo_troca - 1] = 'N/A';
+    linha[cm.ca_no_momento - 1] = r.dados[cm.ca_no_momento - 1];
+    linha[cm.status_confirmacao_totem - 1] = 'CONFIRMADO';
+    linha[cm.id_totem - 1] = r.dados[cm.id_totem - 1];
+    linha[cm.responsavel_almox - 1] = solicitante.matricula;
+    linha[cm.observacao - 1] = justificativa;
+    linha[cm.id_movimentacao_estornada - 1] = idMovimentacao;
+
+    for (let i = 0; i < cm.hash_registro; i++) {
+      if (linha[i] === undefined) linha[i] = '';
+    }
+    linha[cm.hash_registro - 1] = _sha256(linha.join('|'));
+    sh.appendRow(linha);
+
+    _gravarLogSemTrava({
+      matricula_usuario: solicitante.matricula,
+      perfil_rbac_no_momento: solicitante.perfil_rbac,
+      acao_realizada: 'ESTORNO', tabela_afetada: CFG.ABAS.MOVIMENTACOES,
+      id_registro_afetado: idEstorno, origem_acao: 'WEB_DESKTOP',
+      resultado: 'SUCESSO', criticidade: 'AVISO',
+      justificativa: justificativa,
+      valor_anterior: JSON.stringify({ estornando: idMovimentacao })
+    });
+
+    return { ok: true, id_estorno: idEstorno, estornou: idMovimentacao };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 8 · PUBLICAÇÃO WEB
+   Implantar → Nova implantação → App da Web → Executar como: eu
+                                             → Acesso: qualquer pessoa da organização
+═══════════════════════════════════════════════════════════════════════════ */
+
+function doGet(e) {
+  const tela = (e && e.parameter && e.parameter.tela) || 'ponto';
+  const arquivos = { ponto: 'Ponto', totem: 'Totem', gestor: 'Gestor' };
+  return HtmlService.createTemplateFromFile(arquivos[tela] || 'Ponto')
+    .evaluate()
+    .setTitle('EHS Smart Enterprise')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** Permite incluir CSS/JS de outros arquivos HTML. */
+function incluir(nomeArquivo) {
+  return HtmlService.createHtmlOutputFromFile(nomeArquivo).getContent();
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⚠ NOTAS PARA O ARQUITETO DE DADOS
+   Duas abas novas são exigidas por este código e ainda não constam no schema:
+
+   1) Treinamentos
+      id_treinamento | matricula | norma | carga_horaria | data_realizacao |
+      data_vencimento | instrutor | numero_certificado | status
+      → Sem ela, a trava de NR-10/12/33/35 não tem onde consultar o vencimento.
+
+   2) Jornada_Consolidada
+      matricula | data_referencia | horas_extras_mes | turnos_consecutivos |
+      intervalo_min_horas | atividades_criticas_7d | ocorrencias_recentes
+      → Insumo do motor de fadiga. No MVP pode ser alimentada por importação
+        semanal do relógio de ponto; em produção vira integração.
+═══════════════════════════════════════════════════════════════════════════ */

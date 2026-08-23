@@ -1,0 +1,1232 @@
+/**************************************************************************************************
+ * EHS SMART ENTERPRISE — BACK-END CORPORATIVO
+ * Arquivo: Code.gs   |   Versão 2.0 (Enterprise)
+ * ------------------------------------------------------------------------------------------------
+ * SUBSTITUI INTEGRALMENTE a versão 1.0. Apague o conteúdo antigo e cole este no lugar.
+ * O Motor_Regras.gs continua funcionando: todas as funções que ele usa (lerAba_, valorDe_,
+ * acharColuna_, normalizar_, agora_, gerarId_, registrarLog, CONFIG, COLUNAS) foram preservadas
+ * com os mesmos nomes e as mesmas assinaturas.
+ *
+ * O QUE MUDOU NESTA VERSÃO:
+ *   1. IDENTIDADE VIA GOOGLE (OAuth) — sem tela de senha. O sistema lê o e-mail da sessão Google,
+ *      procura na aba Funcionarios e descobre sozinho quem é, qual o perfil e qual o setor.
+ *   2. RBAC EM 4 NÍVEIS — MASTER_ADMIN, DIRETORIA, GESTOR e OPERACIONAL (funcionário/terceirizado),
+ *      com SST preservado como perfil técnico. Toda função sensível passa por exigirPermissao_().
+ *   3. ESCOPO DE DADOS POR SETOR — o Gestor não "filtra" o setor dele na tela: o back-end
+ *      simplesmente não devolve dados de outros setores. Filtro de tela é conveniência;
+ *      escopo de servidor é segurança.
+ *   4. AÇÕES EM LOTE (CRUD) — ativar, inativar e alterar setor de vários funcionários de uma vez,
+ *      com gravação em bloco (rápida) e log encadeado em bloco (íntegro).
+ *   5. AUDITORIA INTACTA — a corrente de hashes SHA-256 continua idêntica. Ganhou apenas uma
+ *      versão em lote que calcula a corrente em memória e grava tudo de uma vez.
+ **************************************************************************************************/
+
+
+/* ================================================================================================
+ * BLOCO 0 — LEIA ANTES DE IMPLANTAR (decisão de arquitetura, não é detalhe técnico)
+ * ------------------------------------------------------------------------------------------------
+ * Session.getActiveUser().getEmail() só devolve o e-mail em duas situações:
+ *
+ *   (A) Implantação "Executar como: EU (proprietário)" + "Acesso: usuários do domínio".
+ *       Funciona apenas se todos estiverem no MESMO domínio Google Workspace (@suaempresa.com.br).
+ *       ✅ RECOMENDADO. Ninguém precisa de permissão na planilha — o script escreve por você.
+ *       A imutabilidade do Log_Auditoria fica preservada: o usuário não alcança a planilha.
+ *
+ *   (B) Implantação "Executar como: usuário que acessa".
+ *       O e-mail sempre vem, mas CADA usuário precisa de acesso direto à planilha.
+ *       ❌ NÃO RECOMENDADO: quem tem acesso de edição à planilha pode alterar o Log_Auditoria
+ *       por fora do sistema. A corrente de hashes detectaria, mas o dano já teria ocorrido.
+ *
+ *   Se a empresa usa contas @gmail.com comuns (sem Workspace), o caminho (A) não devolve e-mail.
+ *   Nesse caso o projeto precisa de Workspace antes de ir a produção — é pré-requisito, não opção.
+ *
+ * O TOTEM é o único ponto anônimo: é um tablet compartilhado no chão de fábrica, sem usuário
+ * logado. Ele usa uma implantação separada, autenticada por TOKEN DE DISPOSITIVO (ver CONFIG).
+ * ============================================================================================== */
+
+
+/* ================================================================================================
+ * BLOCO 1 — CONFIGURAÇÃO CENTRAL
+ * ============================================================================================== */
+
+const CONFIG = {
+  // --- Abas ---
+  ABA_FUNCIONARIOS:  'Funcionarios',
+  ABA_LOG:           'Log_Auditoria',
+  ABA_MOVIMENTACOES: 'Movimentacoes_Trocas',
+  ABA_EPIS:          'EPIs',
+  ABA_SETORES:       'Setores',
+
+  // --- Regras ---
+  STATUS_ATIVO: 'ATIVO',
+  VALIDAR_CA_NA_ENTREGA: true,
+
+  TIMEZONE: 'America/Sao_Paulo',
+  HASH_GENESIS: 'GENESIS-EHS-SMART-ENTERPRISE',
+
+  // --- Sessão ---
+  // Cache curto da identidade: evita reler a aba Funcionarios a cada clique do usuário.
+  CACHE_IDENTIDADE_SEGUNDOS: 300,
+
+  // --- Totem ---
+  // Guarde o valor real em Configurações do Projeto > Propriedades do Script > TOKEN_TOTEM.
+  // Nunca deixe o token escrito aqui no código.
+  PROPRIEDADE_TOKEN_TOTEM: 'TOKEN_TOTEM',
+
+  // Limite de segurança para ações em lote (evita um clique errado atingir a base inteira)
+  MAX_REGISTROS_POR_LOTE: 200
+};
+
+/**
+ * OS 4 NÍVEIS + o perfil técnico de SST.
+ * MASTER_ADMIN  → tudo, inclusive gestão de usuários e parametrização
+ * DIRETORIA     → KPIs macro e relatórios de conformidade (números, não nomes)
+ * GESTOR        → apenas o próprio setor, com nomes e ações preventivas
+ * OPERACIONAL   → funcionário nativo e terceirizado: só o Totem
+ * SST           → perfil técnico-normativo (RCA, EPI, auditoria), transversal aos setores
+ */
+const PERFIS = {
+  MASTER_ADMIN: 'MASTER_ADMIN',
+  DIRETORIA:    'DIRETORIA',
+  GESTOR:       'GESTOR',
+  SST:          'SST',
+  OPERACIONAL:  'OPERACIONAL'
+};
+
+/** Sinônimos aceitos na coluna perfil_acesso da planilha (o RH digita de formas diferentes). */
+const SINONIMOS_PERFIL = {
+  MASTER_ADMIN: ['MASTER_ADMIN', 'MASTER', 'ADMIN', 'ADMINISTRADOR'],
+  DIRETORIA:    ['DIRETORIA', 'DIRETOR', 'EXECUTIVO', 'C_LEVEL'],
+  GESTOR:       ['GESTOR', 'GESTOR_AREA', 'SUPERVISOR', 'COORDENADOR'],
+  SST:          ['SST', 'SEGURANCA_TRABALHO', 'TECNICO_SEGURANCA', 'ALMOXARIFADO'],
+  OPERACIONAL:  ['OPERACIONAL', 'FUNCIONARIO', 'NATIVO', 'TERCEIRIZADO', 'COLABORADOR']
+};
+
+/**
+ * MATRIZ DE PERMISSÕES — a fonte única da verdade do RBAC.
+ * A tela esconde botões; esta matriz é quem realmente impede a ação.
+ */
+const PERMISSOES = {
+  // Administração
+  GERIR_USUARIOS:       [PERFIS.MASTER_ADMIN],
+  ACAO_EM_LOTE:         [PERFIS.MASTER_ADMIN],
+  PARAMETRIZAR_SISTEMA: [PERFIS.MASTER_ADMIN],
+
+  // Painéis
+  DASHBOARD_EXECUTIVO:  [PERFIS.MASTER_ADMIN, PERFIS.DIRETORIA],
+  DASHBOARD_SETOR:      [PERFIS.MASTER_ADMIN, PERFIS.DIRETORIA, PERFIS.GESTOR, PERFIS.SST],
+
+  // Operação
+  ENTREGA_EPI:          [PERFIS.MASTER_ADMIN, PERFIS.SST],
+  VALIDAR_ACESSO:       [PERFIS.MASTER_ADMIN, PERFIS.SST],   // + o Totem, que usa token
+  AUDITAR_LOG:          [PERFIS.MASTER_ADMIN, PERFIS.SST],
+
+  // Dado sensível de saúde: nominal só para quem tem responsabilidade direta sobre a pessoa.
+  // A Diretoria enxerga o mesmo fenômeno de forma AGREGADA (ver montarPainelExecutivo).
+  FADIGA_NOMINAL:       [PERFIS.MASTER_ADMIN, PERFIS.GESTOR, PERFIS.SST]
+};
+
+const COLUNAS = {
+  FUNCIONARIOS: {
+    id:      ['id_funcionario', 'id', 'codigo_funcionario'],
+    cracha:  ['id_cracha', 'cracha', 'matricula', 'id_biometria'],
+    nome:    ['nome_completo', 'nome'],
+    email:   ['email_corporativo', 'email', 'e_mail', 'login'],
+    perfil:  ['perfil_acesso', 'perfil', 'nivel_acesso'],
+    status:        ['status_efetivo', 'status'],
+    statusEditavel: ['status'],          // ⚠ coluna EDITÁVEL pelo RH (ver nota em BLOCO 7)
+    vinculo: ['vinculo', 'tipo_vinculo'],
+    setor:   ['setor', 'setor_autorizado'],
+    funcao:  ['funcao', 'cargo'],
+    idGestor: ['id_gestor', 'gestor_responsavel']
+  },
+  LOG: {
+    id:           ['id_log'],
+    timestamp:    ['timestamp', 'data_hora'],
+    usuario:      ['usuario_responsavel', 'usuario'],
+    perfil:       ['perfil_acesso', 'perfil'],
+    acao:         ['acao', 'evento'],
+    entidade:     ['entidade_afetada', 'entidade'],
+    idRegistro:   ['id_registro_afetado', 'id_registro'],
+    detalhes:     ['detalhes', 'descricao', 'motivo'],
+    resultado:    ['resultado', 'status_resultado'],
+    hashAnterior: ['hash_anterior', 'hash_previo'],
+    hashRegistro: ['hash_registro', 'hash']
+  },
+  MOVIMENTACOES: {
+    id:            ['id_movimentacao', 'id'],
+    timestamp:     ['timestamp', 'data_hora', 'data_entrega'],
+    idFuncionario: ['id_funcionario', 'funcionario'],
+    idEpi:         ['id_epi', 'epi'],
+    ca:            ['ca_epi', 'ca', 'certificado_aprovacao'],
+    tipo:          ['tipo_movimentacao', 'tipo'],
+    quantidade:    ['quantidade', 'qtd'],
+    motivo:        ['motivo', 'justificativa'],
+    conservacao:   ['estado_conservacao', 'conservacao'],
+    validade:      ['validade_tecnica', 'validade'],
+    responsavel:   ['responsavel_entrega', 'responsavel'],
+    idLog:         ['id_log_vinculado', 'id_log']
+  },
+  EPIS: {
+    id:         ['id_epi', 'id'],
+    descricao:  ['descricao', 'nome_epi', 'descricao_epi'],
+    ca:         ['ca', 'numero_ca', 'certificado_aprovacao'],
+    validadeCa: ['validade_ca', 'vencimento_ca']
+  }
+};
+
+
+/* ================================================================================================
+ * BLOCO 2 — UTILITÁRIOS DE PLANILHA (base reutilizada pelo Motor_Regras.gs)
+ * ============================================================================================== */
+
+function getPlanilha_() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getAba_(nomeAba) {
+  var aba = getPlanilha_().getSheetByName(nomeAba);
+  if (!aba) throw new Error('Aba não encontrada: "' + nomeAba + '". Confira o nome em CONFIG.');
+  return aba;
+}
+
+/** Deixa texto comparável: sem espaços nas pontas, sem acento, em MAIÚSCULAS. */
+function normalizar_(valor) {
+  if (valor === null || valor === undefined) return '';
+  return String(valor).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+}
+
+function agora_() {
+  return Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+}
+
+/** Lê uma aba inteira: { aba, cabecalhos, linhas, indice }. */
+function lerAba_(nomeAba) {
+  var aba = getAba_(nomeAba);
+  var valores = aba.getDataRange().getValues();
+  if (valores.length === 0) return { aba: aba, cabecalhos: [], linhas: [], indice: {} };
+
+  var cabecalhos = valores[0].map(function (c) { return normalizar_(c); });
+  var indice = {};
+  cabecalhos.forEach(function (nome, pos) { indice[nome] = pos; });
+
+  return { aba: aba, cabecalhos: cabecalhos, linhas: valores.slice(1), indice: indice };
+}
+
+/** Acha a posição de uma coluna testando a lista de sinônimos. -1 se não existir. */
+function acharColuna_(indice, sinonimos) {
+  for (var i = 0; i < sinonimos.length; i++) {
+    var chave = normalizar_(sinonimos[i]);
+    if (indice.hasOwnProperty(chave)) return indice[chave];
+  }
+  return -1;
+}
+
+function valorDe_(linha, indice, sinonimos) {
+  var pos = acharColuna_(indice, sinonimos);
+  return pos === -1 ? '' : linha[pos];
+}
+
+function gerarId_(prefixo, totalLinhas) {
+  var ano = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy');
+  return prefixo + '-' + ano + '-' + ('000000' + (totalLinhas + 1)).slice(-6);
+}
+
+
+/* ================================================================================================
+ * BLOCO 3 — IDENTIDADE (OAuth Google) E RBAC
+ * ============================================================================================== */
+
+/** Traduz o que o RH escreveu na planilha para um dos perfis oficiais. */
+function traduzirPerfil_(textoPerfil) {
+  var alvo = normalizar_(textoPerfil).replace(/[\s\-]/g, '_');
+  for (var perfil in SINONIMOS_PERFIL) {
+    if (SINONIMOS_PERFIL[perfil].indexOf(alvo) !== -1) return perfil;
+  }
+  return PERFIS.OPERACIONAL;   // padrão seguro: o menor privilégio possível
+}
+
+/**
+ * QUEM ESTÁ FALANDO COM O SISTEMA.
+ * Lê o e-mail da sessão Google, procura na aba Funcionarios e devolve o contexto completo.
+ * Nenhuma senha, nenhuma tela de login: a conta corporativa Google É a credencial.
+ *
+ * @return {Object} { autenticado, email, id, nome, perfil, setor, status, vinculo, motivo }
+ */
+function identificarUsuario() {
+  var email = '';
+  try {
+    email = Session.getActiveUser().getEmail() || '';
+  } catch (e) {
+    email = '';
+  }
+  // Fallback para execuções por gatilho ou quando o domínio não expõe o usuário ativo.
+  if (!email) {
+    try { email = Session.getEffectiveUser().getEmail() || ''; } catch (e2) { email = ''; }
+  }
+
+  if (!email) {
+    return { autenticado: false, motivo: 'SEM_SESSAO',
+             mensagem: 'Não foi possível identificar sua conta Google. Verifique o tipo de implantação.' };
+  }
+
+  // Cache curto: evita reler a planilha inteira a cada clique da mesma pessoa.
+  var cache = CacheService.getScriptCache();
+  var chaveCache = 'IDENT_' + email;
+  var emCache = cache.get(chaveCache);
+  if (emCache) return JSON.parse(emCache);
+
+  var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+  var alvo = normalizar_(email);
+  var usuario = null;
+
+  for (var i = 0; i < func.linhas.length; i++) {
+    var linha = func.linhas[i];
+    if (normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.email)) !== alvo) continue;
+
+    usuario = {
+      autenticado: true,
+      email:   email,
+      id:      String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.id)),
+      nome:    String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.nome)),
+      perfil:  traduzirPerfil_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.perfil)),
+      setor:   String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.setor)),
+      vinculo: normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.vinculo)),
+      status:  normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.status)),
+      linhaPlanilha: i + 2
+    };
+    break;
+  }
+
+  if (!usuario) {
+    return { autenticado: false, motivo: 'EMAIL_NAO_CADASTRADO', email: email,
+             mensagem: 'Sua conta não está cadastrada na base de funcionários. Procure o RH ou o SST.' };
+  }
+
+  // Funcionário desligado ou afastado perde o acesso na hora, sem depender do RH remover permissão.
+  if (usuario.status !== normalizar_(CONFIG.STATUS_ATIVO)) {
+    return { autenticado: false, motivo: 'USUARIO_INATIVO', email: email,
+             mensagem: 'Cadastro sem status ATIVO. Acesso suspenso.' };
+  }
+
+  cache.put(chaveCache, JSON.stringify(usuario), CONFIG.CACHE_IDENTIDADE_SEGUNDOS);
+  return usuario;
+}
+
+/** Limpa o cache de identidade de um e-mail (usar após mudança de perfil ou setor). */
+function invalidarCacheIdentidade_(email) {
+  if (!email) return;
+  CacheService.getScriptCache().remove('IDENT_' + email);
+}
+
+/** O perfil informado pode executar a ação? */
+function podeExecutar_(perfil, acao) {
+  var permitidos = PERMISSOES[acao] || [];
+  return permitidos.indexOf(normalizar_(perfil)) !== -1;
+}
+
+/**
+ * PORTEIRO PADRÃO DE TODA FUNÇÃO SENSÍVEL.
+ * Identifica o usuário, confere a permissão e, se barrar, já grava a tentativa na auditoria.
+ * Devolve o usuário quando autorizado; lança erro quando não.
+ */
+function exigirPermissao_(acao) {
+  var usuario = identificarUsuario();
+
+  if (!usuario.autenticado) {
+    throw new Error('ACESSO_NEGADO: ' + usuario.mensagem);
+  }
+
+  if (!podeExecutar_(usuario.perfil, acao)) {
+    registrarLog({
+      usuario: usuario.email, perfil: usuario.perfil, acao: 'TENTATIVA_ACESSO_NEGADO',
+      entidade: 'RBAC', idRegistro: acao,
+      detalhes: 'Perfil ' + usuario.perfil + ' tentou executar "' + acao + '" sem permissão.',
+      resultado: 'NEGADO'
+    });
+    throw new Error('ACESSO_NEGADO: seu perfil (' + usuario.perfil + ') não tem permissão para esta ação.');
+  }
+
+  return usuario;
+}
+
+/**
+ * ESCOPO DE DADOS. Esta é a diferença entre "esconder" e "proteger".
+ * MASTER_ADMIN, DIRETORIA e SST enxergam todos os setores.
+ * GESTOR enxerga apenas o próprio setor — os demais nem chegam a sair do servidor.
+ */
+function dentroDoEscopo_(usuario, setorDoRegistro) {
+  if ([PERFIS.MASTER_ADMIN, PERFIS.DIRETORIA, PERFIS.SST].indexOf(usuario.perfil) !== -1) return true;
+  if (usuario.perfil === PERFIS.GESTOR) return normalizar_(setorDoRegistro) === normalizar_(usuario.setor);
+  return false;
+}
+
+/** Chamada pela tela logo ao abrir, para montar o menu de acordo com o perfil. */
+function obterContextoUsuario() {
+  var usuario = identificarUsuario();
+  if (!usuario.autenticado) return usuario;
+
+  return {
+    autenticado: true,
+    nome: usuario.nome, email: usuario.email, perfil: usuario.perfil, setor: usuario.setor,
+    permissoes: {
+      gerirUsuarios:      podeExecutar_(usuario.perfil, 'GERIR_USUARIOS'),
+      acaoEmLote:         podeExecutar_(usuario.perfil, 'ACAO_EM_LOTE'),
+      dashboardExecutivo: podeExecutar_(usuario.perfil, 'DASHBOARD_EXECUTIVO'),
+      dashboardSetor:     podeExecutar_(usuario.perfil, 'DASHBOARD_SETOR'),
+      entregaEpi:         podeExecutar_(usuario.perfil, 'ENTREGA_EPI'),
+      fadigaNominal:      podeExecutar_(usuario.perfil, 'FADIGA_NOMINAL'),
+      auditarLog:         podeExecutar_(usuario.perfil, 'AUDITAR_LOG')
+    }
+  };
+}
+
+
+/* ================================================================================================
+ * BLOCO 4 — CRIPTOGRAFIA E AUDITORIA IMUTÁVEL (inalterada na essência)
+ * ============================================================================================== */
+
+/**
+ * Gera o hash SHA-256 de um texto, em hexadecimal.
+ * "Impressão digital" do conteúdo: mudou uma vírgula, muda o hash inteiro.
+ */
+function gerarHashSHA256(texto) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(texto), Utilities.Charset.UTF_8);
+  var hex = '';
+  for (var i = 0; i < bytes.length; i++) {
+    var b = bytes[i];
+    if (b < 0) b += 256;
+    var parte = b.toString(16);
+    if (parte.length === 1) parte = '0' + parte;
+    hex += parte;
+  }
+  return hex;
+}
+
+/** Frase canônica assinada. A ordem é fixa de propósito. */
+function montarPayloadLog_(d) {
+  return [d.hashAnterior, d.idLog, d.timestamp, d.usuario, d.perfil,
+          d.acao, d.entidade, d.idRegistro, d.detalhes, d.resultado].join('|');
+}
+
+function obterHashAnterior_(logInfo) {
+  if (logInfo.linhas.length === 0) return CONFIG.HASH_GENESIS;
+  var ultima = logInfo.linhas[logInfo.linhas.length - 1];
+  var hash = valorDe_(ultima, logInfo.indice, COLUNAS.LOG.hashRegistro);
+  return hash ? String(hash) : CONFIG.HASH_GENESIS;
+}
+
+/** Normaliza um evento solto para o formato interno do log. */
+function prepararEvento_(evento) {
+  return {
+    usuario:    String(evento.usuario    || 'SISTEMA'),
+    perfil:     normalizar_(evento.perfil || 'SISTEMA'),
+    acao:       normalizar_(evento.acao   || 'NAO_INFORMADA'),
+    entidade:   String(evento.entidade   || ''),
+    idRegistro: String(evento.idRegistro || ''),
+    detalhes:   String(evento.detalhes   || ''),
+    resultado:  normalizar_(evento.resultado || '')
+  };
+}
+
+/**
+ * ESCRITA EM LOTE NA CORRENTE DE HASHES — versão SEM trava.
+ * Uso interno: só pode ser chamada por quem JÁ está segurando o LockService.
+ * (Chamar registrarLog aqui dentro travaria o script contra ele mesmo.)
+ *
+ * Ganho de performance: 50 funcionários alterados = 1 leitura + 1 escrita, não 50 idas à planilha.
+ * A corrente é calculada em memória, elo por elo, e gravada de uma vez só — íntegra do mesmo jeito.
+ */
+function _gravarLogsSemTrava_(eventos) {
+  if (!eventos || eventos.length === 0) return [];
+
+  var logInfo = lerAba_(CONFIG.ABA_LOG);
+  var hashAnterior = obterHashAnterior_(logInfo);
+  var totalColunas = Math.max(logInfo.cabecalhos.length, 11);
+  var linhasParaGravar = [];
+  var recibos = [];
+
+  for (var i = 0; i < eventos.length; i++) {
+    var d = prepararEvento_(eventos[i]);
+    d.idLog = gerarId_('LOG', logInfo.linhas.length + i);
+    d.timestamp = agora_();
+    d.hashAnterior = hashAnterior;
+
+    var hashRegistro = gerarHashSHA256(montarPayloadLog_(d));
+    var linha = new Array(totalColunas).fill('');
+
+    function set(sinonimos, valor) {
+      var pos = acharColuna_(logInfo.indice, sinonimos);
+      if (pos !== -1) linha[pos] = valor;
+    }
+
+    set(COLUNAS.LOG.id,           d.idLog);
+    set(COLUNAS.LOG.timestamp,    d.timestamp);
+    set(COLUNAS.LOG.usuario,      d.usuario);
+    set(COLUNAS.LOG.perfil,       d.perfil);
+    set(COLUNAS.LOG.acao,         d.acao);
+    set(COLUNAS.LOG.entidade,     d.entidade);
+    set(COLUNAS.LOG.idRegistro,   d.idRegistro);
+    set(COLUNAS.LOG.detalhes,     d.detalhes);
+    set(COLUNAS.LOG.resultado,    d.resultado);
+    set(COLUNAS.LOG.hashAnterior, d.hashAnterior);
+    set(COLUNAS.LOG.hashRegistro, hashRegistro);
+
+    linhasParaGravar.push(linha);
+    recibos.push({ idLog: d.idLog, timestamp: d.timestamp, hashRegistro: hashRegistro });
+
+    hashAnterior = hashRegistro;   // o elo atual vira o "anterior" do próximo
+  }
+
+  // Uma única escrita para todo o lote (append-only: começa depois da última linha existente).
+  logInfo.aba
+    .getRange(logInfo.linhas.length + 2, 1, linhasParaGravar.length, totalColunas)
+    .setValues(linhasParaGravar);
+  SpreadsheetApp.flush();
+
+  return recibos;
+}
+
+/**
+ * REGISTRA UM EVENTO NO LOG_AUDITORIA (uso geral, com trava).
+ * Assinatura preservada da v1.0 — o Motor_Regras.gs continua chamando exatamente assim.
+ */
+function registrarLog(evento) {
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  try {
+    return _gravarLogsSemTrava_([evento])[0];
+  } finally {
+    trava.releaseLock();
+  }
+}
+
+/**
+ * AUDITORIA: recalcula a corrente inteira e aponta a primeira linha adulterada.
+ * Restrito a MASTER_ADMIN e SST.
+ */
+function verificarIntegridadeLog() {
+  var auditor = exigirPermissao_('AUDITAR_LOG');
+
+  var logInfo = lerAba_(CONFIG.ABA_LOG);
+  var hashAnterior = CONFIG.HASH_GENESIS;
+
+  for (var i = 0; i < logInfo.linhas.length; i++) {
+    var l = logInfo.linhas[i];
+    var d = {
+      hashAnterior: hashAnterior,
+      idLog:      String(valorDe_(l, logInfo.indice, COLUNAS.LOG.id)),
+      timestamp:  String(valorDe_(l, logInfo.indice, COLUNAS.LOG.timestamp)),
+      usuario:    String(valorDe_(l, logInfo.indice, COLUNAS.LOG.usuario)),
+      perfil:     String(valorDe_(l, logInfo.indice, COLUNAS.LOG.perfil)),
+      acao:       String(valorDe_(l, logInfo.indice, COLUNAS.LOG.acao)),
+      entidade:   String(valorDe_(l, logInfo.indice, COLUNAS.LOG.entidade)),
+      idRegistro: String(valorDe_(l, logInfo.indice, COLUNAS.LOG.idRegistro)),
+      detalhes:   String(valorDe_(l, logInfo.indice, COLUNAS.LOG.detalhes)),
+      resultado:  String(valorDe_(l, logInfo.indice, COLUNAS.LOG.resultado))
+    };
+
+    var esperado = gerarHashSHA256(montarPayloadLog_(d));
+    var gravado  = String(valorDe_(l, logInfo.indice, COLUNAS.LOG.hashRegistro));
+
+    if (esperado !== gravado) {
+      return { integro: false, totalRegistros: logInfo.linhas.length, auditor: auditor.email,
+               primeiraQuebra: { linhaPlanilha: i + 2, idLog: d.idLog,
+                                 hashEsperado: esperado, hashGravado: gravado } };
+    }
+    hashAnterior = gravado;
+  }
+
+  return { integro: true, totalRegistros: logInfo.linhas.length, auditor: auditor.email, primeiraQuebra: null };
+}
+
+
+/* ================================================================================================
+ * BLOCO 5 — TOTEM (ponto anônimo, autenticado por token de dispositivo)
+ * ============================================================================================== */
+
+/** Confere o token do tablet contra a propriedade guardada no projeto. */
+function validarTokenTotem_(token) {
+  var esperado = PropertiesService.getScriptProperties().getProperty(CONFIG.PROPRIEDADE_TOKEN_TOTEM);
+  if (!esperado) return false;            // sem token configurado, o totem não opera
+  return String(token || '') === esperado;
+}
+
+/**
+ * Chamada pelo Totem quando o crachá é lido.
+ * A resposta traz apenas nome, vínculo e liberação. Nada de fadiga, score ou dado de saúde:
+ * o ponto permanece limpo e rápido (Dossiê 3.3.1).
+ */
+function validarAcessoTotem(idCracha, origemDispositivo, tokenDispositivo) {
+  var dispositivo = origemDispositivo || 'TOTEM-NAO-IDENTIFICADO';
+
+  if (!validarTokenTotem_(tokenDispositivo)) {
+    registrarLog({
+      usuario: dispositivo, perfil: 'TOTEM', acao: 'TOTEM_NAO_AUTORIZADO',
+      entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: '',
+      detalhes: 'Chamada recebida sem token válido de dispositivo.', resultado: 'NEGADO'
+    });
+    return { autorizado: false, motivo: 'DISPOSITIVO_NAO_AUTORIZADO',
+             mensagem: 'Terminal não autorizado. Acione o SST.', funcionario: null };
+  }
+
+  var cracha = normalizar_(idCracha);
+  if (!cracha) {
+    var logVazio = registrarLog({
+      usuario: dispositivo, perfil: 'TOTEM', acao: 'VALIDACAO_ACESSO',
+      entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: '',
+      detalhes: 'Leitura sem identificador. Dispositivo: ' + dispositivo, resultado: 'NEGADO'
+    });
+    return { autorizado: false, motivo: 'LEITURA_INVALIDA',
+             mensagem: 'Crachá não identificado. Reposicione e tente novamente.',
+             funcionario: null, idLog: logVazio.idLog };
+  }
+
+  var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+  var achado = null;
+
+  for (var i = 0; i < func.linhas.length; i++) {
+    var linha = func.linhas[i];
+    if (normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.cracha)) !== cracha) continue;
+    achado = {
+      id:      String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.id)),
+      nome:    String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.nome)),
+      status:  normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.status)),
+      vinculo: normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.vinculo)),
+      setor:   String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.setor)),
+      funcao:  String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.funcao))
+    };
+    break;
+  }
+
+  if (!achado) {
+    var logNaoCad = registrarLog({
+      usuario: cracha, perfil: 'TOTEM', acao: 'VALIDACAO_ACESSO',
+      entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: cracha,
+      detalhes: 'Crachá não localizado na base. Dispositivo: ' + dispositivo, resultado: 'NEGADO'
+    });
+    return { autorizado: false, motivo: 'CRACHA_NAO_CADASTRADO',
+             mensagem: 'Crachá não cadastrado. Procure o SST.', funcionario: null, idLog: logNaoCad.idLog };
+  }
+
+  // REGRA CENTRAL: status_efetivo precisa ser ATIVO.
+  if (achado.status !== normalizar_(CONFIG.STATUS_ATIVO)) {
+    var logNegado = registrarLog({
+      usuario: achado.id, perfil: 'TOTEM', acao: 'BLOQUEIO_ACESSO',
+      entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: achado.id,
+      detalhes: 'Acesso negado. status_efetivo = "' + (achado.status || 'VAZIO') +
+                '". Dispositivo: ' + dispositivo,
+      resultado: 'NEGADO'
+    });
+    return { autorizado: false, motivo: 'STATUS_INATIVO',
+             // Mensagem neutra: não expõe afastamento ou motivo de saúde na frente da fila.
+             mensagem: 'Acesso bloqueado. Procure o setor de SST.',
+             funcionario: { nome: achado.nome, vinculo: achado.vinculo }, idLog: logNegado.idLog };
+  }
+
+  var logOk = registrarLog({
+    usuario: achado.id, perfil: 'TOTEM', acao: 'VALIDACAO_ACESSO',
+    entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: achado.id,
+    detalhes: 'Acesso liberado. Vínculo: ' + achado.vinculo + '. Dispositivo: ' + dispositivo,
+    resultado: 'PERMITIDO'
+  });
+
+  return {
+    autorizado: true, motivo: 'OK',
+    mensagem: 'Bem-vindo(a), ' + achado.nome.split(' ')[0] + '!',
+    funcionario: { id: achado.id, nome: achado.nome, vinculo: achado.vinculo,
+                   setor: achado.setor, funcao: achado.funcao },
+    idLog: logOk.idLog
+  };
+}
+
+
+/* ================================================================================================
+ * BLOCO 6 — ENTREGA DE EPI (NR-06)
+ * ============================================================================================== */
+
+function consultarEpi_(idEpi) {
+  var alvo = normalizar_(idEpi);
+  var r = { encontrado: false, ca: '', caValido: false, descricao: '', validadeCa: '', observacao: '' };
+
+  var epis;
+  try { epis = lerAba_(CONFIG.ABA_EPIS); }
+  catch (e) { r.observacao = 'Aba ' + CONFIG.ABA_EPIS + ' ausente — validação de CA não executada.'; return r; }
+
+  for (var i = 0; i < epis.linhas.length; i++) {
+    var linha = epis.linhas[i];
+    if (normalizar_(valorDe_(linha, epis.indice, COLUNAS.EPIS.id)) !== alvo) continue;
+
+    var validade = valorDe_(linha, epis.indice, COLUNAS.EPIS.validadeCa);
+    var dataValidade = validade instanceof Date ? validade : new Date(validade);
+
+    r.encontrado = true;
+    r.descricao  = String(valorDe_(linha, epis.indice, COLUNAS.EPIS.descricao));
+    r.ca         = String(valorDe_(linha, epis.indice, COLUNAS.EPIS.ca));
+    r.validadeCa = validade ? Utilities.formatDate(dataValidade, CONFIG.TIMEZONE, 'yyyy-MM-dd') : '';
+    r.caValido   = !!r.ca && !isNaN(dataValidade.getTime()) && dataValidade >= new Date();
+    break;
+  }
+  return r;
+}
+
+/**
+ * Registra a entrega de um EPI e gera o log em seguida.
+ * O responsável não é mais informado por parâmetro: é quem está logado. Ninguém assina por outro.
+ */
+function registrarEntregaEPI(p) {
+  p = p || {};
+  var operador = exigirPermissao_('ENTREGA_EPI');   // RBAC via sessão Google
+
+  if (!p.idFuncionario || !p.idEpi) {
+    var logCampos = registrarLog({
+      usuario: operador.email, perfil: operador.perfil, acao: 'ENTREGA_EPI',
+      entidade: CONFIG.ABA_MOVIMENTACOES, idRegistro: '',
+      detalhes: 'Campos obrigatórios ausentes (idFuncionario e/ou idEpi).', resultado: 'ERRO'
+    });
+    return { sucesso: false, motivo: 'DADOS_INCOMPLETOS', mensagem: 'Informe o funcionário e o EPI.',
+             idMovimentacao: null, idLog: logCampos.idLog };
+  }
+
+  var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+  var alvo = normalizar_(p.idFuncionario);
+  var colaborador = null;
+
+  for (var i = 0; i < func.linhas.length; i++) {
+    var linha = func.linhas[i];
+    var idLinha     = normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.id));
+    var crachaLinha = normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.cracha));
+    if (alvo !== idLinha && alvo !== crachaLinha) continue;
+    colaborador = {
+      id:     String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.id)),
+      nome:   String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.nome)),
+      setor:  String(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.setor)),
+      status: normalizar_(valorDe_(linha, func.indice, COLUNAS.FUNCIONARIOS.status))
+    };
+    break;
+  }
+
+  if (!colaborador) {
+    var logSemFunc = registrarLog({
+      usuario: operador.email, perfil: operador.perfil, acao: 'ENTREGA_EPI',
+      entidade: CONFIG.ABA_MOVIMENTACOES, idRegistro: String(p.idFuncionario),
+      detalhes: 'Funcionário não localizado na base.', resultado: 'NEGADO'
+    });
+    return { sucesso: false, motivo: 'FUNCIONARIO_NAO_ENCONTRADO', mensagem: 'Funcionário não localizado.',
+             idMovimentacao: null, idLog: logSemFunc.idLog };
+  }
+
+  if (colaborador.status !== normalizar_(CONFIG.STATUS_ATIVO)) {
+    var logInativo = registrarLog({
+      usuario: operador.email, perfil: operador.perfil, acao: 'BLOQUEIO_ENTREGA_EPI',
+      entidade: CONFIG.ABA_MOVIMENTACOES, idRegistro: colaborador.id,
+      detalhes: 'Entrega bloqueada: status_efetivo = "' + colaborador.status + '".', resultado: 'NEGADO'
+    });
+    return { sucesso: false, motivo: 'FUNCIONARIO_INATIVO',
+             mensagem: 'Funcionário sem status ATIVO. Entrega bloqueada.',
+             idMovimentacao: null, idLog: logInativo.idLog };
+  }
+
+  var epi = consultarEpi_(p.idEpi);
+  if (CONFIG.VALIDAR_CA_NA_ENTREGA && epi.encontrado && !epi.caValido) {
+    var logCa = registrarLog({
+      usuario: operador.email, perfil: operador.perfil, acao: 'BLOQUEIO_ENTREGA_EPI',
+      entidade: CONFIG.ABA_MOVIMENTACOES, idRegistro: String(p.idEpi),
+      detalhes: 'NR-06: CA inválido ou vencido. CA=' + (epi.ca || 'AUSENTE') +
+                ' | Validade=' + (epi.validadeCa || 'NAO_INFORMADA'),
+      resultado: 'NEGADO'
+    });
+    return { sucesso: false, motivo: 'CA_INVALIDO',
+             mensagem: 'EPI com CA vencido ou ausente. Liberação bloqueada (NR-06).',
+             idMovimentacao: null, idLog: logCa.idLog };
+  }
+
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  var idMovimentacao, recibo;
+
+  try {
+    var mov = lerAba_(CONFIG.ABA_MOVIMENTACOES);
+    idMovimentacao = gerarId_('MOV', mov.linhas.length);
+
+    var totalColunas = Math.max(mov.cabecalhos.length, 12);
+    var novaLinha = new Array(totalColunas).fill('');
+
+    function set(sinonimos, valor) {
+      var pos = acharColuna_(mov.indice, sinonimos);
+      if (pos !== -1) novaLinha[pos] = valor;
+    }
+
+    set(COLUNAS.MOVIMENTACOES.id,            idMovimentacao);
+    set(COLUNAS.MOVIMENTACOES.timestamp,     agora_());
+    set(COLUNAS.MOVIMENTACOES.idFuncionario, colaborador.id);
+    set(COLUNAS.MOVIMENTACOES.idEpi,         String(p.idEpi));
+    set(COLUNAS.MOVIMENTACOES.ca,            epi.ca || '');
+    set(COLUNAS.MOVIMENTACOES.tipo,          normalizar_(p.tipo || 'ENTREGA'));
+    set(COLUNAS.MOVIMENTACOES.quantidade,    Number(p.quantidade || 1));
+    set(COLUNAS.MOVIMENTACOES.motivo,        String(p.motivo || 'PRIMEIRA_ENTREGA'));
+    set(COLUNAS.MOVIMENTACOES.conservacao,   normalizar_(p.conservacao || 'NOVO'));
+    set(COLUNAS.MOVIMENTACOES.validade,      String(p.validadeTecnica || ''));
+    set(COLUNAS.MOVIMENTACOES.responsavel,   operador.email);
+
+    mov.aba.appendRow(novaLinha);
+
+    // Log dentro da MESMA transação, usando a versão sem trava (evita travamento duplo).
+    recibo = _gravarLogsSemTrava_([{
+      usuario: operador.email, perfil: operador.perfil, acao: 'ENTREGA_EPI',
+      entidade: CONFIG.ABA_MOVIMENTACOES, idRegistro: idMovimentacao,
+      detalhes: 'EPI ' + p.idEpi + (epi.descricao ? ' (' + epi.descricao + ')' : '') +
+                ' | CA=' + (epi.ca || 'N/D') + ' | Qtd=' + (p.quantidade || 1) +
+                ' | Recebedor=' + colaborador.id + ' | Tipo=' + normalizar_(p.tipo || 'ENTREGA'),
+      resultado: 'SUCESSO'
+    }])[0];
+
+    var posLog = acharColuna_(mov.indice, COLUNAS.MOVIMENTACOES.idLog);
+    if (posLog !== -1) {
+      mov.aba.getRange(mov.linhas.length + 2, posLog + 1).setValue(recibo.idLog);
+    }
+    SpreadsheetApp.flush();
+
+  } finally {
+    trava.releaseLock();
+  }
+
+  return { sucesso: true, motivo: 'OK', mensagem: 'Entrega registrada para ' + colaborador.nome + '.',
+           idMovimentacao: idMovimentacao, idLog: recibo.idLog };
+}
+
+
+/* ================================================================================================
+ * BLOCO 7 — MÓDULO ADMINISTRATIVO: LISTAGEM E AÇÕES EM LOTE (MASTER ADMIN)
+ * ------------------------------------------------------------------------------------------------
+ * ⚠ REGRA DE OURO RESPEITADA AQUI:
+ *   'status_efetivo' é coluna DERIVADA por fórmula (bloqueio em cascata de terceirizados, NRs
+ *   vencidas etc.). O sistema NUNCA escreve nela — se escrevesse, apagaria a fórmula e o
+ *   bloqueio automático morreria silenciosamente.
+ *   As ações em lote gravam na coluna 'status' (editável pelo RH); o 'status_efetivo' recalcula
+ *   sozinho. Se as duas colunas tiverem o mesmo nome na sua planilha, a função aborta e avisa.
+ * ============================================================================================== */
+
+/**
+ * Lista funcionários para a tela administrativa (a que terá os checkboxes).
+ * Uma única leitura, tudo já pronto para o JavaScript filtrar na tela sem novo carregamento.
+ */
+function listarFuncionariosParaGestao(filtroOpcional) {
+  var usuario = exigirPermissao_('GERIR_USUARIOS');
+  var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+  var lista = [];
+
+  for (var i = 0; i < func.linhas.length; i++) {
+    var l = func.linhas[i];
+    var id = String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.id) || '').trim();
+    if (!id) continue;
+
+    lista.push({
+      id: id,
+      nome:    String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.nome)),
+      email:   String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.email)),
+      cracha:  String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.cracha)),
+      setor:   String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.setor)),
+      funcao:  String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.funcao)),
+      vinculo: normalizar_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.vinculo)),
+      perfil:  traduzirPerfil_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.perfil)),
+      status:  normalizar_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.status)),
+      linha:   i + 2
+    });
+  }
+
+  registrarLog({
+    usuario: usuario.email, perfil: usuario.perfil, acao: 'CONSULTA_GESTAO_USUARIOS',
+    entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: '',
+    detalhes: 'Listagem administrativa. Registros: ' + lista.length, resultado: 'PERMITIDO'
+  });
+
+  return { total: lista.length, setores: listarSetores_(), funcionarios: lista };
+}
+
+/** Lista os setores disponíveis (alimenta o seletor de "Alterar Setor" e os filtros da tela). */
+function listarSetores_() {
+  var setores = {};
+  try {
+    var aba = lerAba_(CONFIG.ABA_SETORES);
+    for (var i = 0; i < aba.linhas.length; i++) {
+      var nome = String(valorDe_(aba.linhas[i], aba.indice, ['nome_setor', 'setor', 'descricao']) || '').trim();
+      if (nome) setores[nome] = true;
+    }
+  } catch (e) {
+    var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);   // fallback: deduz dos próprios funcionários
+    for (var j = 0; j < func.linhas.length; j++) {
+      var s = String(valorDe_(func.linhas[j], func.indice, COLUNAS.FUNCIONARIOS.setor) || '').trim();
+      if (s) setores[s] = true;
+    }
+  }
+  return Object.keys(setores).sort();
+}
+
+/**
+ * AÇÃO EM LOTE — o coração do módulo administrativo.
+ * Recebe os IDs marcados nos checkboxes e aplica a mesma ação a todos.
+ *
+ * @param {Object} p
+ *        {string}   p.acao       ATIVAR | INATIVAR | ALTERAR_SETOR
+ *        {string[]} p.ids        IDs dos funcionários marcados na tela
+ *        {string}   p.novoSetor  obrigatório quando acao = ALTERAR_SETOR
+ *        {string}   p.motivo     justificativa (vai para a auditoria)
+ * @return {Object} { sucesso, processados, ignorados, detalhe, idsLog }
+ */
+function executarAcaoEmLote(p) {
+  p = p || {};
+  var admin = exigirPermissao_('ACAO_EM_LOTE');
+
+  var acao = normalizar_(p.acao);
+  var ids = (p.ids || []).map(function (x) { return normalizar_(x); }).filter(function (x) { return !!x; });
+
+  // --- Validações de entrada ------------------------------------------------------------------
+  if (['ATIVAR', 'INATIVAR', 'ALTERAR_SETOR'].indexOf(acao) === -1) {
+    return { sucesso: false, motivo: 'ACAO_INVALIDA',
+             mensagem: 'Ações válidas: ATIVAR, INATIVAR, ALTERAR_SETOR.' };
+  }
+  if (ids.length === 0) {
+    return { sucesso: false, motivo: 'SELECAO_VAZIA', mensagem: 'Nenhum funcionário selecionado.' };
+  }
+  if (ids.length > CONFIG.MAX_REGISTROS_POR_LOTE) {
+    return { sucesso: false, motivo: 'LOTE_EXCEDIDO',
+             mensagem: 'Limite de ' + CONFIG.MAX_REGISTROS_POR_LOTE + ' registros por operação.' };
+  }
+  if (acao === 'ALTERAR_SETOR' && !p.novoSetor) {
+    return { sucesso: false, motivo: 'SETOR_NAO_INFORMADO', mensagem: 'Informe o novo setor.' };
+  }
+
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+
+  var resultado = { sucesso: true, processados: 0, ignorados: [], detalhe: [], idsLog: [] };
+
+  try {
+    var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+    var colId     = acharColuna_(func.indice, COLUNAS.FUNCIONARIOS.id);
+    var colStatus = acharColuna_(func.indice, COLUNAS.FUNCIONARIOS.statusEditavel);
+    var colEfetivo = acharColuna_(func.indice, ['status_efetivo']);
+    var colSetor  = acharColuna_(func.indice, COLUNAS.FUNCIONARIOS.setor);
+    var colEmail  = acharColuna_(func.indice, COLUNAS.FUNCIONARIOS.email);
+    var colNome   = acharColuna_(func.indice, COLUNAS.FUNCIONARIOS.nome);
+
+    if (colId === -1) throw new Error('Coluna id_funcionario não encontrada.');
+
+    // Proteção da fórmula: nunca escrever em status_efetivo.
+    if ((acao === 'ATIVAR' || acao === 'INATIVAR')) {
+      if (colStatus === -1) throw new Error('Coluna "status" (editável) não encontrada.');
+      if (colStatus === colEfetivo) {
+        throw new Error('A planilha só possui "status_efetivo". Peça ao Arquiteto de Dados a coluna ' +
+                        '"status" editável — o sistema não pode sobrescrever uma coluna de fórmula.');
+      }
+    }
+    if (acao === 'ALTERAR_SETOR' && colSetor === -1) throw new Error('Coluna "setor" não encontrada.');
+
+    // --- Aplica as mudanças em memória ---------------------------------------------------------
+    var colunaAlvo = (acao === 'ALTERAR_SETOR') ? colSetor : colStatus;
+    var novoValor  = (acao === 'ALTERAR_SETOR') ? String(p.novoSetor)
+                   : (acao === 'ATIVAR' ? CONFIG.STATUS_ATIVO : 'INATIVO');
+
+    var valoresColuna = func.aba.getRange(2, colunaAlvo + 1, func.linhas.length, 1).getValues();
+    var eventos = [];
+    var encontrados = {};
+    var houveMudanca = false;
+
+    for (var i = 0; i < func.linhas.length; i++) {
+      var linha = func.linhas[i];
+      var idLinha = normalizar_(linha[colId]);
+      if (ids.indexOf(idLinha) === -1) continue;
+
+      encontrados[idLinha] = true;
+
+      var valorAnterior = String(valoresColuna[i][0]);
+      var emailAlvo = colEmail !== -1 ? String(linha[colEmail]) : '';
+      var nomeAlvo  = colNome  !== -1 ? String(linha[colNome])  : idLinha;
+
+      // Trava de segurança: o admin não pode inativar a própria conta e se trancar para fora.
+      if (acao === 'INATIVAR' && normalizar_(emailAlvo) === normalizar_(admin.email)) {
+        resultado.ignorados.push({ id: idLinha, motivo: 'AUTO_INATIVACAO_BLOQUEADA' });
+        continue;
+      }
+
+      if (normalizar_(valorAnterior) === normalizar_(novoValor)) {
+        resultado.ignorados.push({ id: idLinha, motivo: 'JA_ESTAVA_NESSE_ESTADO' });
+        continue;
+      }
+
+      valoresColuna[i][0] = novoValor;
+      houveMudanca = true;
+      resultado.processados += 1;
+      resultado.detalhe.push({ id: idLinha, nome: nomeAlvo, de: valorAnterior, para: novoValor });
+
+      // Um evento de auditoria POR FUNCIONÁRIO — rastreabilidade individual, mesmo em lote.
+      eventos.push({
+        usuario: admin.email, perfil: admin.perfil, acao: 'LOTE_' + acao,
+        entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: idLinha,
+        detalhes: 'Ação em lote sobre ' + nomeAlvo + '. Campo alterado de "' + valorAnterior +
+                  '" para "' + novoValor + '". Motivo: ' + (p.motivo || 'não informado') +
+                  '. Lote com ' + ids.length + ' selecionado(s).',
+        resultado: 'SUCESSO'
+      });
+
+      if (emailAlvo) invalidarCacheIdentidade_(emailAlvo);   // perfil/status novo vale na hora
+    }
+
+    // IDs que vieram da tela mas não existem mais na base
+    for (var k = 0; k < ids.length; k++) {
+      if (!encontrados[ids[k]]) resultado.ignorados.push({ id: ids[k], motivo: 'NAO_ENCONTRADO' });
+    }
+
+    // --- Uma única escrita para o lote inteiro (performance) -----------------------------------
+    if (houveMudanca) {
+      func.aba.getRange(2, colunaAlvo + 1, func.linhas.length, 1).setValues(valoresColuna);
+      SpreadsheetApp.flush();
+    }
+
+    // --- Auditoria em bloco, com a corrente de hashes calculada em memória ---------------------
+    if (eventos.length > 0) {
+      eventos.push({
+        usuario: admin.email, perfil: admin.perfil, acao: 'RESUMO_ACAO_EM_LOTE',
+        entidade: CONFIG.ABA_FUNCIONARIOS, idRegistro: '',
+        detalhes: 'Operação "' + acao + '" aplicada a ' + resultado.processados + ' de ' +
+                  ids.length + ' selecionado(s). Ignorados: ' + resultado.ignorados.length + '.',
+        resultado: 'SUCESSO'
+      });
+      var recibos = _gravarLogsSemTrava_(eventos);
+      resultado.idsLog = recibos.map(function (r) { return r.idLog; });
+    }
+
+  } catch (erro) {
+    resultado.sucesso = false;
+    resultado.motivo = 'ERRO_EXECUCAO';
+    resultado.mensagem = String(erro.message || erro);
+  } finally {
+    trava.releaseLock();
+  }
+
+  if (resultado.sucesso) {
+    resultado.mensagem = resultado.processados + ' funcionário(s) atualizado(s). ' +
+                         resultado.ignorados.length + ' ignorado(s).';
+  }
+  return resultado;
+}
+
+
+/* ================================================================================================
+ * BLOCO 8 — CARGA DE DADOS DOS PAINÉIS
+ * A tela recebe TUDO de uma vez e filtra no navegador. Sem recarregar, sem nova ida ao servidor.
+ * O que o servidor não mandar, a tela não tem como mostrar — é assim que o escopo vira segurança.
+ * ============================================================================================== */
+
+/**
+ * Payload do Dashboard do Gestor.
+ * GESTOR recebe apenas o próprio setor. MASTER_ADMIN, DIRETORIA e SST recebem todos.
+ * A lista já vem com as categorias que o filtro client-side vai usar (setor, NR, fadiga).
+ */
+function carregarDadosDashboard() {
+  var usuario = exigirPermissao_('DASHBOARD_SETOR');
+  var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+  var colaboradores = [];
+
+  for (var i = 0; i < func.linhas.length; i++) {
+    var l = func.linhas[i];
+    var setor = String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.setor) || '');
+
+    if (!dentroDoEscopo_(usuario, setor)) continue;   // ← escopo aplicado no servidor
+
+    colaboradores.push({
+      id:      String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.id)),
+      nome:    String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.nome)),
+      setor:   setor,
+      funcao:  String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.funcao)),
+      vinculo: normalizar_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.vinculo)),
+      status:  normalizar_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.status))
+    });
+  }
+
+  var payload = {
+    usuario: { nome: usuario.nome, perfil: usuario.perfil, setor: usuario.setor },
+    geradoEm: agora_(),
+    setoresDisponiveis: usuario.perfil === PERFIS.GESTOR ? [usuario.setor] : listarSetores_(),
+    colaboradores: colaboradores,
+    alertasFadiga: []
+  };
+
+  // Fadiga nominal só para quem tem responsabilidade direta. Diretoria usa o painel agregado.
+  if (podeExecutar_(usuario.perfil, 'FADIGA_NOMINAL') && typeof consultarAlertasDoGestor === 'function') {
+    var perfilConsulta = usuario.perfil === PERFIS.MASTER_ADMIN ? 'ADMIN' : usuario.perfil;
+    var alertas = consultarAlertasDoGestor(usuario.id, perfilConsulta);
+    payload.alertasFadiga = alertas.alertas || [];
+  }
+
+  return payload;
+}
+
+/**
+ * Painel Executivo (MASTER_ADMIN e DIRETORIA).
+ * Devolve NÚMEROS, não nomes: a Diretoria acompanha a tendência de fadiga por área sem receber
+ * a lista nominal de quem está exausto. Dado de saúde ocupacional não sobe a hierarquia por
+ * curiosidade — sobe agregado, para decisão de recurso e escala.
+ */
+function carregarPainelExecutivo() {
+  var usuario = exigirPermissao_('DASHBOARD_EXECUTIVO');
+  var func = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+
+  var porSetor = {};
+  var totais = { ativos: 0, inativos: 0, nativos: 0, terceirizados: 0 };
+
+  for (var i = 0; i < func.linhas.length; i++) {
+    var l = func.linhas[i];
+    var setor   = String(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.setor) || 'NÃO INFORMADO');
+    var status  = normalizar_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.status));
+    var vinculo = normalizar_(valorDe_(l, func.indice, COLUNAS.FUNCIONARIOS.vinculo));
+
+    if (!porSetor[setor]) porSetor[setor] = { setor: setor, ativos: 0, inativos: 0, fadigaAlta: 0, fadigaCritica: 0 };
+
+    if (status === normalizar_(CONFIG.STATUS_ATIVO)) { porSetor[setor].ativos += 1; totais.ativos += 1; }
+    else { porSetor[setor].inativos += 1; totais.inativos += 1; }
+
+    if (vinculo.indexOf('TERCEIR') !== -1) totais.terceirizados += 1; else totais.nativos += 1;
+  }
+
+  // Fadiga agregada por setor (sem nomes)
+  if (typeof consultarAlertasDoGestor === 'function') {
+    var alertas = consultarAlertasDoGestor(usuario.id, 'ADMIN');
+    (alertas.alertas || []).forEach(function (a) {
+      var s = a.setor || 'NÃO INFORMADO';
+      if (!porSetor[s]) porSetor[s] = { setor: s, ativos: 0, inativos: 0, fadigaAlta: 0, fadigaCritica: 0 };
+      if (normalizar_(a.nivel) === 'CRITICO') porSetor[s].fadigaCritica += 1;
+      else porSetor[s].fadigaAlta += 1;
+    });
+  }
+
+  registrarLog({
+    usuario: usuario.email, perfil: usuario.perfil, acao: 'CONSULTA_PAINEL_EXECUTIVO',
+    entidade: 'KPI', idRegistro: '', detalhes: 'Consulta de indicadores macro agregados.',
+    resultado: 'PERMITIDO'
+  });
+
+  return {
+    usuario: { nome: usuario.nome, perfil: usuario.perfil },
+    geradoEm: agora_(), totais: totais,
+    indicadoresPorSetor: Object.keys(porSetor).map(function (k) { return porSetor[k]; })
+  };
+}
+
+
+/* ================================================================================================
+ * BLOCO 9 — ROTEAMENTO DAS TELAS E API
+ * ============================================================================================== */
+
+/** Permite incluir CSS/JS de outros arquivos HTML: <?!= incluir('Estilos'); ?> */
+function incluir(nomeArquivo) {
+  return HtmlService.createHtmlOutputFromFile(nomeArquivo).getContent();
+}
+
+/**
+ * Abre a tela certa para cada perfil.
+ * O roteamento acontece no SERVIDOR: um operacional não recebe nem o HTML do painel administrativo.
+ */
+function doGet(e) {
+  var pagina = (e && e.parameter && e.parameter.pagina) || '';
+
+  // O Totem é público (tablet compartilhado), autenticado por token nas chamadas de dados.
+  if (pagina === 'totem') {
+    return HtmlService.createTemplateFromFile('Totem').evaluate()
+      .setTitle('EHS Smart — Totem').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  }
+
+  var usuario = identificarUsuario();
+  if (!usuario.autenticado) {
+    return HtmlService.createHtmlOutput(
+      '<div style="font-family:system-ui;padding:40px;text-align:center">' +
+      '<h2>Acesso não autorizado</h2><p>' + usuario.mensagem + '</p></div>');
+  }
+
+  var arquivo;
+  switch (usuario.perfil) {
+    case PERFIS.MASTER_ADMIN: arquivo = pagina === 'dashboard' ? 'Dashboard_Gestor' : 'Painel_Admin'; break;
+    case PERFIS.DIRETORIA:    arquivo = 'Painel_Executivo'; break;
+    case PERFIS.GESTOR:       arquivo = 'Dashboard_Gestor'; break;
+    case PERFIS.SST:          arquivo = 'Dashboard_Gestor'; break;
+    default:                  arquivo = 'Totem';            break;   // operacional
+  }
+
+  return HtmlService.createTemplateFromFile(arquivo).evaluate()
+    .setTitle('EHS Smart Enterprise')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function resposta_(objeto) {
+  return ContentService.createTextOutput(JSON.stringify(objeto)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * API REST — usada pelo Totem (que roda em tablet, fora da sessão Google).
+ * As telas administrativas NÃO usam este caminho: elas chamam as funções direto por
+ * google.script.run, o que preserva a identidade da sessão e o RBAC.
+ */
+function doPost(e) {
+  try {
+    var corpo = (e && e.postData && e.postData.contents) ? JSON.parse(e.postData.contents) : {};
+    var acao = normalizar_(corpo.acao);
+
+    switch (acao) {
+      case 'VALIDAR_ACESSO':
+        return resposta_(validarAcessoTotem(corpo.idCracha, corpo.dispositivo, corpo.token));
+      default:
+        return resposta_({ sucesso: false, motivo: 'ACAO_DESCONHECIDA',
+                           mensagem: 'A API pública aceita apenas validar_acesso.' });
+    }
+
+  } catch (erro) {
+    try {
+      registrarLog({ usuario: 'API', perfil: 'SISTEMA', acao: 'ERRO_API', entidade: 'doPost',
+                     idRegistro: '', detalhes: String(erro), resultado: 'ERRO' });
+    } catch (ignorado) {}
+    return resposta_({ sucesso: false, motivo: 'ERRO_INTERNO', mensagem: String(erro) });
+  }
+}
+
+
+/* ================================================================================================
+ * BLOCO 10 — INSTALAÇÃO E TESTES
+ * ============================================================================================== */
+
+/** Rode UMA vez para gravar o token do Totem com segurança (troque o valor antes de executar). */
+function configurarTokenTotem() {
+  var token = Utilities.getUuid();   // ou defina uma string sua
+  PropertiesService.getScriptProperties().setProperty(CONFIG.PROPRIEDADE_TOKEN_TOTEM, token);
+  Logger.log('Token do Totem gravado. Copie e configure no tablet: ' + token);
+  return token;
+}
+
+function teste_1_hash() {
+  Logger.log(gerarHashSHA256('EHS Smart Enterprise'));
+}
+
+function teste_2_quemSouEu() {
+  Logger.log(JSON.stringify(identificarUsuario(), null, 2));
+  Logger.log(JSON.stringify(obterContextoUsuario(), null, 2));
+}
+
+function teste_3_listarParaGestao() {
+  Logger.log(JSON.stringify(listarFuncionariosParaGestao(), null, 2));
+}
+
+function teste_4_acaoEmLote() {
+  Logger.log(JSON.stringify(executarAcaoEmLote({
+    acao: 'INATIVAR',
+    ids: ['F001', 'F002'],
+    motivo: 'Teste de homologação do módulo administrativo'
+  }), null, 2));
+}
+
+function teste_5_integridadeLog() {
+  Logger.log(JSON.stringify(verificarIntegridadeLog(), null, 2));
+}
+
+function teste_6_painelExecutivo() {
+  Logger.log(JSON.stringify(carregarPainelExecutivo(), null, 2));
+}

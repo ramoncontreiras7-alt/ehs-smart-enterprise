@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EHS Smart Enterprise — Totem e Dashboard do Gestor</title>
+
+<!-- ============================================================
+     BLOCO 1 — DEPENDÊNCIAS VISUAIS
+     Tailwind via CDN (ideal para MVP/teste local).
+     Tipografia: Saira Condensed (sinalização industrial, legível a 2m)
+                 IBM Plex Sans (corpo técnico) / IBM Plex Mono (dados)
+     ============================================================ -->
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;900&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          aco:       '#0E1216', // fundo do totem (aço pintado)
+          painel:    '#171C22', // superfície elevada no escuro
+          borda:     '#2A323C',
+          sinal:     '#FFB000', // amarelo de segurança (cor de marca)
+          liberado:  '#19A974',
+          bloqueado: '#E03A2F',
+          atencao:   '#F08C1E',
+          concreto:  '#E8E5DF', // fundo do dashboard (sala de gestão)
+          tinta:     '#12161A'
+        },
+        fontFamily: {
+          display: ['"Saira Condensed"', 'sans-serif'],
+          sans:    ['"IBM Plex Sans"', 'sans-serif'],
+          mono:    ['"IBM Plex Mono"', 'monospace']
+        }
+      }
+    }
+  }
+</script>
+
+<style>
+  /* Faixa zebrada de sinalização — o elemento de assinatura do sistema.
+     É o mesmo vocabulário visual do chão de fábrica (fita de demarcação). */
+  .faixa {
+    background-image: repeating-linear-gradient(45deg,
+      currentColor 0 14px, transparent 14px 28px);
+  }
+  .tecla:active { transform: translateY(2px); }
+
+  /* Foco visível em tudo — obrigatório para operação com luva/teclado */
+  :focus-visible { outline: 3px solid #FFB000; outline-offset: 3px; }
+
+  @keyframes surgir { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .surgir { animation: surgir .28s ease-out both; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .surgir { animation: none; }
+    * { transition: none !important; }
+  }
+
+  /* Esconde a barra de rolagem no totem (tela cheia, sem distração) */
+  .sem-scroll::-webkit-scrollbar { display: none; }
+</style>
+</head>
+
+<body class="font-sans bg-aco text-white antialiased">
+
+<!-- ============================================================
+     BLOCO 2 — BARRA RBAC (simulador de login)
+     Serve para VOCÊ alternar entre os perfis durante a demonstração.
+     ATENÇÃO: isto é apenas RBAC VISUAL. A permissão real é validada
+     no back-end (Apps Script) a cada requisição.
+     ============================================================ -->
+<header class="sticky top-0 z-50 bg-tinta border-b border-borda">
+  <div class="h-1 faixa text-sinal opacity-80"></div>
+  <div class="px-4 py-2 flex flex-wrap items-center gap-3">
+
+    <div class="flex items-center gap-3 mr-auto">
+      <div class="w-9 h-9 grid place-items-center bg-sinal text-tinta font-display font-black text-lg">EHS</div>
+      <div class="leading-tight">
+        <p class="font-display font-bold tracking-wide text-sm">EHS SMART ENTERPRISE</p>
+        <p class="text-[11px] text-white/50 font-mono" id="rbac-contexto">Sessão não iniciada</p>
+      </div>
+    </div>
+
+    <span id="selo-modo"
+          class="hidden sm:inline-flex items-center gap-2 text-[11px] font-mono px-2 py-1 border border-sinal/40 text-sinal">
+      <span class="w-2 h-2 rounded-full bg-sinal animate-pulse"></span>
+      <span id="selo-modo-texto">MODO SIMULAÇÃO</span>
+    </span>
+
+    <!-- Alternador de perfil -->
+    <div class="flex items-center bg-painel border border-borda p-1" role="tablist" aria-label="Perfil de acesso">
+      <button data-perfil="FUNCIONARIO" role="tab"
+              class="btn-perfil px-4 py-2 text-sm font-display font-bold tracking-wide">
+        FUNCIONÁRIO · TOTEM
+      </button>
+      <button data-perfil="GESTOR" role="tab"
+              class="btn-perfil px-4 py-2 text-sm font-display font-bold tracking-wide">
+        GESTOR · DASHBOARD
+      </button>
+    </div>
+
+    <div class="hidden md:flex items-center gap-2 pl-3 border-l border-borda">
+      <div class="w-8 h-8 rounded-full bg-borda grid place-items-center font-display font-bold text-sm" id="rbac-iniciais">--</div>
+      <div class="leading-tight">
+        <p class="text-xs font-semibold" id="rbac-nome">—</p>
+        <p class="text-[10px] text-white/45 font-mono uppercase" id="rbac-papel">—</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     BLOCO 3 — TELA 1: TOTEM DO ALMOXARIFADO
+     Regra do Dossiê (3.3.1): o totem NUNCA exibe fadiga, saúde ou
+     dado preditivo. Resposta binária: LIBERADO ou BLOQUEADO.
+     ============================================================ -->
+<main id="tela-totem" class="min-h-[calc(100vh-57px)] bg-aco">
+  <div class="max-w-6xl mx-auto px-4 py-6">
+
+    <!-- Cabeçalho do posto -->
+    <div class="flex items-center justify-between border-b border-borda pb-3 mb-6">
+      <div>
+        <p class="font-display text-2xl font-black tracking-wide">ALMOXARIFADO DE EPI</p>
+        <p class="text-xs font-mono text-white/45">TOTEM-01 · SETOR CALDEIRARIA · NR-06</p>
+      </div>
+      <div class="text-right">
+        <p class="font-mono text-3xl font-semibold tabular-nums" id="totem-relogio">--:--</p>
+        <p class="text-xs font-mono text-white/45" id="totem-data">—</p>
+      </div>
+    </div>
+
+    <!-- ETAPA 1: identificação pelo crachá -->
+    <section id="etapa-identificacao" class="grid lg:grid-cols-[1.1fr_1fr] gap-6">
+
+      <div class="bg-painel border border-borda p-6">
+        <p class="font-display text-xl font-bold tracking-wide text-sinal">APROXIME O CRACHÁ</p>
+        <p class="text-sm text-white/55 mt-1">Ou digite a matrícula no teclado ao lado.</p>
+
+        <!-- Visor da matrícula: fonte enorme, tabular, legível de longe -->
+        <div class="mt-6 bg-aco border-2 border-borda px-5 py-6">
+          <p class="text-[11px] font-mono text-white/40 mb-2">MATRÍCULA</p>
+          <p id="visor-cracha"
+             class="font-mono text-5xl sm:text-6xl font-semibold tabular-nums tracking-widest min-h-[4rem] break-all">
+            <span class="text-white/20">------</span>
+          </p>
+        </div>
+
+        <p id="totem-mensagem" class="mt-4 text-sm text-atencao min-h-[1.25rem]" role="status" aria-live="polite"></p>
+
+        <div class="mt-6 grid grid-cols-2 gap-3">
+          <button id="btn-limpar"
+                  class="tecla h-16 border-2 border-borda font-display font-bold text-lg tracking-wide hover:border-white/40 transition">
+            APAGAR
+          </button>
+          <button id="btn-validar"
+                  class="tecla h-16 bg-sinal text-tinta font-display font-black text-lg tracking-wide hover:brightness-110 transition disabled:opacity-40">
+            VALIDAR ACESSO
+          </button>
+        </div>
+
+        <p class="mt-4 text-[11px] font-mono text-white/35 leading-relaxed">
+          Matrículas de teste: 10234 (liberado) · 10871 (liberado) · 20455 (bloqueado — NR-35 vencida)
+        </p>
+      </div>
+
+      <!-- Teclado numérico: alvos grandes para operação com luva -->
+      <div class="bg-painel border border-borda p-6">
+        <div id="teclado" class="grid grid-cols-3 gap-3"></div>
+      </div>
+    </section>
+
+    <!-- ETAPA 2: resultado da validação (banner binário) -->
+    <section id="etapa-resultado" class="hidden surgir">
+      <div id="banner-resultado" class="border-4 p-8">
+        <div class="h-3 faixa mb-6" id="banner-faixa"></div>
+        <p id="resultado-status" class="font-display text-6xl sm:text-8xl font-black tracking-tight leading-none">—</p>
+        <div class="mt-6 grid sm:grid-cols-3 gap-4 text-sm">
+          <div><p class="text-[11px] font-mono opacity-60">COLABORADOR</p><p id="resultado-nome" class="font-semibold text-lg">—</p></div>
+          <div><p class="text-[11px] font-mono opacity-60">FUNÇÃO / SETOR</p><p id="resultado-funcao" class="font-semibold text-lg">—</p></div>
+          <div><p class="text-[11px] font-mono opacity-60">MATRÍCULA</p><p id="resultado-matricula" class="font-mono font-semibold text-lg">—</p></div>
+        </div>
+        <p id="resultado-motivo" class="mt-6 text-lg font-semibold"></p>
+
+        <div class="mt-8 flex flex-wrap gap-3">
+          <button id="btn-solicitar-epi"
+                  class="tecla h-16 px-8 bg-white text-tinta font-display font-black text-xl tracking-wide hover:brightness-90 transition">
+            SOLICITAR EPI
+          </button>
+          <button id="btn-encerrar"
+                  class="tecla h-16 px-8 border-2 border-current font-display font-bold text-xl tracking-wide">
+            ENCERRAR
+          </button>
+        </div>
+        <p class="mt-4 text-xs font-mono opacity-60">
+          Retorno automático em <span id="contador-reset">20</span>s
+        </p>
+      </div>
+    </section>
+
+    <!-- ETAPA 3: catálogo de EPI -->
+    <section id="etapa-epi" class="hidden surgir">
+      <div class="flex items-center justify-between mb-5">
+        <div>
+          <p class="font-display text-3xl font-black tracking-wide">SELECIONE O EPI</p>
+          <p class="text-sm text-white/50">Somente itens com Certificado de Aprovação (CA) válido são exibidos.</p>
+        </div>
+        <button id="btn-voltar-epi" class="tecla h-14 px-6 border-2 border-borda font-display font-bold tracking-wide">VOLTAR</button>
+      </div>
+      <div id="grade-epi" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </section>
+
+    <!-- ETAPA 4: comprovante de entrega -->
+    <section id="etapa-comprovante" class="hidden surgir">
+      <div class="max-w-2xl mx-auto bg-painel border-4 border-liberado p-8 text-center">
+        <div class="h-3 faixa text-liberado mb-6"></div>
+        <p class="font-display text-5xl font-black text-liberado">ENTREGA REGISTRADA</p>
+        <p class="mt-3 text-white/70" id="comprovante-item">—</p>
+        <div class="mt-6 bg-aco border border-borda p-4 text-left font-mono text-xs space-y-1">
+          <p><span class="text-white/40">PROTOCOLO&nbsp;&nbsp;</span><span id="comprovante-protocolo">—</span></p>
+          <p><span class="text-white/40">HASH LOG&nbsp;&nbsp;&nbsp;</span><span id="comprovante-hash" class="break-all">—</span></p>
+          <p><span class="text-white/40">REGISTRO&nbsp;&nbsp;&nbsp;</span><span id="comprovante-data">—</span></p>
+        </div>
+        <p class="mt-4 text-xs text-white/40">Registro append-only gravado em Log_Auditoria. Não pode ser editado nem excluído.</p>
+        <button id="btn-finalizar"
+                class="tecla mt-6 h-16 w-full bg-sinal text-tinta font-display font-black text-xl tracking-wide">
+          CONCLUIR
+        </button>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- ============================================================
+     BLOCO 4 — TELA 2: DASHBOARD DO GESTOR
+     Aqui — e somente aqui — aparecem os alertas preditivos de fadiga.
+     ============================================================ -->
+<main id="tela-gestor" class="hidden min-h-[calc(100vh-57px)] bg-concreto text-tinta">
+  <div class="max-w-7xl mx-auto px-4 py-8">
+
+    <div class="flex flex-wrap items-end justify-between gap-4 border-b-2 border-tinta/10 pb-5">
+      <div>
+        <p class="text-[11px] font-mono tracking-widest text-tinta/50">PAINEL DO GESTOR DE SETOR</p>
+        <h1 class="font-display text-4xl font-black tracking-tight">CALDEIRARIA · TURNO A</h1>
+      </div>
+      <div class="text-right">
+        <p class="text-xs font-mono text-tinta/50">ATUALIZADO EM</p>
+        <p class="font-mono font-semibold" id="dash-atualizado">—</p>
+        <button id="btn-atualizar"
+                class="mt-2 px-4 py-2 bg-tinta text-white font-display font-bold text-sm tracking-wide hover:bg-tinta/80 transition">
+          ATUALIZAR DADOS
+        </button>
+      </div>
+    </div>
+
+    <!-- Faixa de indicadores -->
+    <section class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6" id="dash-kpis"></section>
+
+    <div class="grid lg:grid-cols-[1.35fr_1fr] gap-6 mt-6">
+
+      <!-- Alertas preditivos de fadiga -->
+      <section class="bg-white border border-tinta/10">
+        <div class="px-5 py-4 border-b border-tinta/10 flex items-center gap-3">
+          <span class="w-2.5 h-2.5 rounded-full bg-bloqueado animate-pulse"></span>
+          <h2 class="font-display text-2xl font-black tracking-wide">ALERTAS PREDITIVOS DE FADIGA</h2>
+          <span class="ml-auto text-[11px] font-mono text-tinta/45">VISÍVEL APENAS PARA GESTOR / SST</span>
+        </div>
+        <div id="lista-fadiga" class="divide-y divide-tinta/10"></div>
+        <p class="px-5 py-3 text-xs text-tinta/50 border-t border-tinta/10">
+          O colaborador não é notificado. O relógio de ponto permanece sem travas (Dossiê 3.3.1).
+        </p>
+      </section>
+
+      <!-- Status normativo + pendências -->
+      <div class="space-y-6">
+        <section class="bg-white border border-tinta/10">
+          <div class="px-5 py-4 border-b border-tinta/10">
+            <h2 class="font-display text-2xl font-black tracking-wide">STATUS DAS NRs</h2>
+            <p class="text-xs text-tinta/50">Treinamentos obrigatórios da equipe do setor.</p>
+          </div>
+          <div id="lista-nrs" class="p-5 space-y-5"></div>
+        </section>
+
+        <section class="bg-white border border-tinta/10">
+          <div class="px-5 py-4 border-b border-tinta/10">
+            <h2 class="font-display text-2xl font-black tracking-wide">PENDÊNCIAS DE EPI</h2>
+          </div>
+          <div id="lista-epi-pendente" class="divide-y divide-tinta/10"></div>
+        </section>
+      </div>
+    </div>
+
+    <p class="mt-8 text-xs text-tinta/45 font-mono">
+      Toda consulta a dado sensível gera registro em Log_Auditoria · RBAC validado no servidor
+    </p>
+  </div>
+</main>
+
+<!-- Aviso de acesso negado (quando o perfil não permite a tela) -->
+<div id="acesso-negado" class="hidden min-h-[calc(100vh-57px)] grid place-items-center bg-aco px-6">
+  <div class="max-w-md text-center border-4 border-bloqueado p-8">
+    <div class="h-3 faixa text-bloqueado mb-6"></div>
+    <p class="font-display text-4xl font-black text-bloqueado">ACESSO NEGADO</p>
+    <p class="mt-3 text-white/70">Seu perfil não tem permissão para abrir este painel. Solicite liberação à equipe de SST.</p>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   BLOCO 5 — CONFIGURAÇÃO
+   >>> COLE AQUI a URL do seu Web App do Apps Script <<<
+   Enquanto estiver vazia, a tela roda em MODO SIMULAÇÃO
+   (dados falsos) para você demonstrar sem back-end.
+   ============================================================ */
+const API_URL = "";
+
+const ID_TOTEM  = "TOTEM-01";
+const ID_GESTOR = "GES-004";      // gestor logado na simulação
+const SEGUNDOS_RESET_TOTEM = 20;  // volta à tela inicial sozinho
+
+/* ============================================================
+   BLOCO 6 — CAMADA DE COMUNICAÇÃO COM O BACK-END
+   Um único ponto de saída. Todo o resto do sistema chama
+   chamarApi({ acao: "...", ... }) e não precisa saber de rede.
+
+   DETALHE IMPORTANTE (Apps Script):
+   usamos Content-Type "text/plain". Isso evita o "preflight" do
+   navegador (requisição OPTIONS), que o Apps Script não responde
+   e que quebraria a chamada com erro de CORS. O doPost() do lado
+   do servidor continua lendo o corpo com JSON.parse(e.postData.contents).
+   ============================================================ */
+async function chamarApi(payload) {
+  if (!API_URL) return simular(payload);
+
+  const resposta = await fetch(API_URL, {
+    method: "POST",
+    redirect: "follow",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload)
+  });
+
+  if (!resposta.ok) throw new Error("Falha de comunicação com o servidor (HTTP " + resposta.status + ")");
+
+  const dados = await resposta.json();
+  if (dados && dados.erro) throw new Error(dados.erro);
+  return dados;
+}
+
+/* Blindagem do Totem (Dossiê 3.3.1):
+   mesmo que o back-end mande dado sensível por engano, o totem apaga
+   antes de renderizar. Fadiga e saúde só existem no painel do gestor. */
+const CAMPOS_PROIBIDOS_NO_TOTEM = [
+  "fadiga", "nivel_fadiga", "horas_extras", "saude", "aso",
+  "alerta_preditivo", "indicadores_fadiga", "score_risco"
+];
+function blindarPayloadTotem(objeto) {
+  if (!objeto || typeof objeto !== "object") return objeto;
+  CAMPOS_PROIBIDOS_NO_TOTEM.forEach(campo => { delete objeto[campo]; });
+  return objeto;
+}
+
+/* ============================================================
+   BLOCO 7 — SIMULADOR (só roda enquanto API_URL estiver vazia)
+   Espelha exatamente o formato que o back-end deve devolver.
+   Use isto como "contrato" com o Engenheiro de Regras.
+   ============================================================ */
+const BASE_SIMULADA = {
+  "10234": { nome: "Ramon Alves de Souza",  funcao: "Caldeireiro",        setor: "Caldeiraria", status: "LIBERADO" },
+  "10871": { nome: "Joana Ribeiro Matos",   funcao: "Soldadora",          setor: "Caldeiraria", status: "LIBERADO" },
+  "20455": { nome: "Carlos Eduardo Pinto",  funcao: "Montador (Terceiro)", setor: "Manutenção",  status: "BLOQUEADO",
+             motivo: "Treinamento NR-35 vencido em 02/07/2026. Liberação suspensa até reciclagem." }
+};
+
+const EPIS_SIMULADOS = [
+  { id_epi: "EPI-014", nome: "Luva de raspa cano longo", ca: "CA 28.542", validade_ca: "10/2027", estoque: 34, vida_util_dias: 90 },
+  { id_epi: "EPI-021", nome: "Óculos ampla visão",        ca: "CA 34.108", validade_ca: "03/2028", estoque: 12, vida_util_dias: 180 },
+  { id_epi: "EPI-033", nome: "Protetor auricular plug",   ca: "CA 19.775", validade_ca: "08/2027", estoque: 87, vida_util_dias: 120 },
+  { id_epi: "EPI-047", nome: "Máscara de solda automática", ca: "CA 41.220", validade_ca: "01/2029", estoque: 5, vida_util_dias: 730 },
+  { id_epi: "EPI-052", nome: "Cinto paraquedista NR-35",  ca: "CA 37.664", validade_ca: "06/2027", estoque: 8, vida_util_dias: 1825 },
+  { id_epi: "EPI-060", nome: "Botina bico composite",     ca: "CA 22.311", validade_ca: "11/2027", estoque: 21, vida_util_dias: 365 }
+];
+
+const DASHBOARD_SIMULADO = {
+  kpis: [
+    { rotulo: "Alertas críticos de fadiga", valor: "2",    nota: "ação imediata recomendada", tom: "critico" },
+    { rotulo: "Colaboradores bloqueados",   valor: "3",    nota: "por NR vencida",            tom: "alerta"  },
+    { rotulo: "Treinamentos vencendo (30d)",valor: "7",    nota: "agendar reciclagem",        tom: "alerta"  },
+    { rotulo: "Vida útil aproveitada (EPI)",valor: "82%",  nota: "meta do setor: 85%",        tom: "neutro"  }
+  ],
+  fadiga: [
+    { id_funcionario: "10871", nome: "Joana Ribeiro Matos", funcao: "Soldadora", nivel: "CRITICO",
+      indicadores: ["18h extras em 14 dias", "6 turnos consecutivos", "Intervalo entre jornadas: 9h"],
+      recomendacao: "Afastar de atividade crítica (NR-33/NR-35) no próximo turno e redistribuir carga." },
+    { id_funcionario: "10490", nome: "Pedro Henrique Lima", funcao: "Caldeireiro", nivel: "CRITICO",
+      indicadores: ["22h extras em 21 dias", "3 atividades críticas em 48h", "1 quase acidente no período"],
+      recomendacao: "Conversa preventiva e encaminhamento ao SST antes de nova liberação." },
+    { id_funcionario: "10234", nome: "Ramon Alves de Souza", funcao: "Caldeireiro", nivel: "ALTO",
+      indicadores: ["11h extras em 14 dias", "4 turnos consecutivos"],
+      recomendacao: "Monitorar. Evitar dobra de turno nesta semana." },
+    { id_funcionario: "10662", nome: "Marta Silveira Nunes", funcao: "Inspetora de qualidade", nivel: "ALTO",
+      indicadores: ["9h extras em 7 dias", "Redução de intervalo entre jornadas"],
+      recomendacao: "Reavaliar escala do fim de semana." }
+  ],
+  nrs: [
+    { norma: "NR-06", tema: "EPI",                validos: 42, vencendo: 3, vencidos: 0 },
+    { norma: "NR-10", tema: "Eletricidade",       validos: 11, vencendo: 2, vencidos: 1 },
+    { norma: "NR-12", tema: "Máquinas",           validos: 28, vencendo: 1, vencidos: 0 },
+    { norma: "NR-33", tema: "Espaços confinados", validos: 9,  vencendo: 0, vencidos: 1 },
+    { norma: "NR-35", tema: "Trabalho em altura", validos: 14, vencendo: 1, vencidos: 1 }
+  ],
+  epi_pendente: [
+    { nome: "Carlos Eduardo Pinto", item: "Cinto paraquedista NR-35", situacao: "Não retirado" },
+    { nome: "Joana Ribeiro Matos",  item: "Máscara de solda",         situacao: "Vida útil vencida há 12 dias" },
+    { nome: "Pedro Henrique Lima",  item: "Luva de raspa",            situacao: "Troca por dano — aguardando registro" }
+  ]
+};
+
+function simular(payload) {
+  return new Promise(resolve => setTimeout(() => {
+    switch (payload.acao) {
+
+      case "VALIDAR_ACESSO": {
+        const f = BASE_SIMULADA[payload.idCracha];
+        if (!f) return resolve({ status: "BLOQUEADO", nome: "Não identificado", funcao: "—", setor: "—",
+                                 motivo: "Matrícula não localizada no cadastro." });
+        return resolve(Object.assign({ matricula: payload.idCracha }, f));
+      }
+
+      case "LISTAR_EPIS":
+        return resolve({ itens: EPIS_SIMULADOS });
+
+      case "REGISTRAR_ENTREGA_EPI":
+        return resolve({
+          sucesso: true,
+          protocolo: "MOV-" + Date.now().toString().slice(-8),
+          hash_log: Array.from({ length: 4 }, () => Math.random().toString(16).slice(2, 10)).join("")
+        });
+
+      case "OBTER_DASHBOARD_GESTOR":
+        return resolve(DASHBOARD_SIMULADO);
+
+      case "REGISTRAR_ACAO_PREVENTIVA":
+        return resolve({ sucesso: true });
+
+      default:
+        return resolve({ erro: "Ação não reconhecida: " + payload.acao });
+    }
+  }, 450));
+}
+
+/* ============================================================
+   BLOCO 8 — CONTROLE DE PERFIL (RBAC visual)
+   ============================================================ */
+const PERFIS = {
+  FUNCIONARIO: { nome: "Terminal do Almoxarifado", papel: "Funcionário", iniciais: "TT",
+                 contexto: "Posto TOTEM-01 · leitura de crachá ativa", telas: ["tela-totem"] },
+  GESTOR:      { nome: "Aline Prado",              papel: "Gestor de Setor", iniciais: "AP",
+                 contexto: "Caldeiraria · Turno A · sessão auditada",  telas: ["tela-gestor"] }
+};
+let perfilAtivo = "FUNCIONARIO";
+
+function trocarPerfil(perfil) {
+  perfilAtivo = perfil;
+  const dados = PERFIS[perfil];
+
+  document.getElementById("rbac-nome").textContent     = dados.nome;
+  document.getElementById("rbac-papel").textContent    = dados.papel;
+  document.getElementById("rbac-iniciais").textContent = dados.iniciais;
+  document.getElementById("rbac-contexto").textContent = dados.contexto;
+
+  document.querySelectorAll(".btn-perfil").forEach(botao => {
+    const ativo = botao.dataset.perfil === perfil;
+    botao.className = "btn-perfil px-4 py-2 text-sm font-display font-bold tracking-wide transition " +
+      (ativo ? "bg-sinal text-tinta" : "text-white/55 hover:text-white");
+    botao.setAttribute("aria-selected", ativo);
+  });
+
+  document.getElementById("tela-totem").classList.toggle("hidden",  !dados.telas.includes("tela-totem"));
+  document.getElementById("tela-gestor").classList.toggle("hidden", !dados.telas.includes("tela-gestor"));
+  document.getElementById("acesso-negado").classList.add("hidden");
+
+  document.body.classList.toggle("bg-concreto", perfil === "GESTOR");
+  document.body.classList.toggle("bg-aco",      perfil !== "GESTOR");
+
+  if (perfil === "GESTOR") carregarDashboard();
+  if (perfil === "FUNCIONARIO") reiniciarTotem();
+}
+
+/* ============================================================
+   BLOCO 9 — LÓGICA DO TOTEM
+   ============================================================ */
+let cracha = "";
+let colaboradorAtual = null;
+let temporizadorReset = null;
+
+const visor = document.getElementById("visor-cracha");
+const mensagem = document.getElementById("totem-mensagem");
+
+function montarTeclado() {
+  const teclado = document.getElementById("teclado");
+  ["1","2","3","4","5","6","7","8","9","0"].forEach(tecla => {
+    const b = document.createElement("button");
+    b.textContent = tecla;
+    b.className = "tecla h-20 bg-aco border-2 border-borda font-mono text-3xl font-semibold hover:border-sinal hover:text-sinal transition";
+    if (tecla === "0") b.className += " col-span-3";
+    b.addEventListener("click", () => digitar(tecla));
+    teclado.appendChild(b);
+  });
+}
+
+function digitar(numero) {
+  if (cracha.length >= 8) return;
+  cracha += numero;
+  atualizarVisor();
+}
+
+function atualizarVisor() {
+  visor.innerHTML = cracha ? cracha : '<span class="text-white/20">------</span>';
+  document.getElementById("btn-validar").disabled = cracha.length < 4;
+}
+
+/* Leitores de crachá RFID se comportam como teclado: digitam e dão Enter.
+   Por isso capturamos as teclas físicas também. */
+document.addEventListener("keydown", evento => {
+  if (perfilAtivo !== "FUNCIONARIO") return;
+  if (!document.getElementById("etapa-identificacao").offsetParent) return;
+  if (/^[0-9]$/.test(evento.key)) digitar(evento.key);
+  if (evento.key === "Backspace") { cracha = cracha.slice(0, -1); atualizarVisor(); }
+  if (evento.key === "Enter" && cracha.length >= 4) validarAcesso();
+});
+
+function mostrarEtapa(idEtapa) {
+  ["etapa-identificacao","etapa-resultado","etapa-epi","etapa-comprovante"]
+    .forEach(id => document.getElementById(id).classList.toggle("hidden", id !== idEtapa));
+}
+
+async function validarAcesso() {
+  if (cracha.length < 4) return;
+  mensagem.textContent = "Consultando conformidade do colaborador...";
+  document.getElementById("btn-validar").disabled = true;
+
+  try {
+    const resposta = blindarPayloadTotem(
+      await chamarApi({ acao: "VALIDAR_ACESSO", idCracha: cracha, idTotem: ID_TOTEM })
+    );
+    colaboradorAtual = resposta;
+    exibirResultado(resposta);
+  } catch (erro) {
+    mensagem.textContent = "Não foi possível validar agora: " + erro.message + ". Chame o almoxarife.";
+    document.getElementById("btn-validar").disabled = false;
+  }
+}
+
+function exibirResultado(dados) {
+  const liberado = dados.status === "LIBERADO";
+  const banner = document.getElementById("banner-resultado");
+
+  banner.className = "border-4 p-8 " + (liberado
+    ? "border-liberado bg-liberado/10 text-liberado"
+    : "border-bloqueado bg-bloqueado/10 text-bloqueado");
+  document.getElementById("banner-faixa").className = "h-3 faixa mb-6";
+
+  document.getElementById("resultado-status").textContent    = liberado ? "LIBERADO" : "BLOQUEADO";
+  document.getElementById("resultado-nome").textContent      = dados.nome || "—";
+  document.getElementById("resultado-funcao").textContent    = (dados.funcao || "—") + " · " + (dados.setor || "—");
+  document.getElementById("resultado-matricula").textContent = dados.matricula || cracha;
+  document.getElementById("resultado-motivo").textContent    = liberado
+    ? "Documentação e treinamentos em dia. Pode retirar EPI."
+    : (dados.motivo || "Pendência normativa registrada. Procure o SST.");
+
+  document.getElementById("btn-solicitar-epi").classList.toggle("hidden", !liberado);
+  mostrarEtapa("etapa-resultado");
+  iniciarContagemReset();
+}
+
+function iniciarContagemReset() {
+  let restante = SEGUNDOS_RESET_TOTEM;
+  clearInterval(temporizadorReset);
+  document.getElementById("contador-reset").textContent = restante;
+  temporizadorReset = setInterval(() => {
+    restante--;
+    document.getElementById("contador-reset").textContent = restante;
+    if (restante <= 0) reiniciarTotem();
+  }, 1000);
+}
+
+async function abrirCatalogoEpi() {
+  clearInterval(temporizadorReset);
+  mostrarEtapa("etapa-epi");
+  const grade = document.getElementById("grade-epi");
+  grade.innerHTML = '<p class="text-white/50 col-span-full">Carregando itens disponíveis...</p>';
+
+  try {
+    const resposta = await chamarApi({ acao: "LISTAR_EPIS", idCracha: cracha, idTotem: ID_TOTEM });
+    const itens = resposta.itens || [];
+    grade.innerHTML = "";
+
+    itens.forEach(item => {
+      const cartao = document.createElement("button");
+      cartao.className = "tecla text-left bg-painel border-2 border-borda p-5 hover:border-sinal transition";
+      cartao.innerHTML = `
+        <p class="font-display text-2xl font-bold leading-tight">${item.nome}</p>
+        <p class="mt-2 font-mono text-xs text-sinal">${item.ca} · válido até ${item.validade_ca}</p>
+        <div class="mt-4 flex items-center justify-between text-xs font-mono text-white/50">
+          <span>Estoque: ${item.estoque}</span>
+          <span>Vida útil: ${item.vida_util_dias} dias</span>
+        </div>`;
+      cartao.addEventListener("click", () => registrarEntrega(item));
+      grade.appendChild(cartao);
+    });
+
+    if (!itens.length) grade.innerHTML = '<p class="text-white/50 col-span-full">Nenhum EPI com CA válido disponível para esta função. Procure o almoxarife.</p>';
+  } catch (erro) {
+    grade.innerHTML = '<p class="text-bloqueado col-span-full">Falha ao carregar o estoque: ' + erro.message + '</p>';
+  }
+}
+
+async function registrarEntrega(item) {
+  const grade = document.getElementById("grade-epi");
+  grade.innerHTML = '<p class="text-white/50 col-span-full">Registrando entrega e gravando log de auditoria...</p>';
+
+  try {
+    const resposta = await chamarApi({
+      acao: "REGISTRAR_ENTREGA_EPI",
+      idCracha: cracha,
+      idEpi: item.id_epi,
+      quantidade: 1,
+      idTotem: ID_TOTEM
+    });
+
+    document.getElementById("comprovante-item").textContent      = item.nome + " · " + item.ca;
+    document.getElementById("comprovante-protocolo").textContent = resposta.protocolo || "—";
+    document.getElementById("comprovante-hash").textContent      = resposta.hash_log || "—";
+    document.getElementById("comprovante-data").textContent      = new Date().toLocaleString("pt-BR");
+    mostrarEtapa("etapa-comprovante");
+  } catch (erro) {
+    grade.innerHTML = '<p class="text-bloqueado col-span-full">A entrega não foi registrada: ' + erro.message + '. Repita a operação.</p>';
+  }
+}
+
+function reiniciarTotem() {
+  clearInterval(temporizadorReset);
+  cracha = "";
+  colaboradorAtual = null;
+  mensagem.textContent = "";
+  atualizarVisor();
+  mostrarEtapa("etapa-identificacao");
+}
+
+function atualizarRelogio() {
+  const agora = new Date();
+  document.getElementById("totem-relogio").textContent = agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  document.getElementById("totem-data").textContent = agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).toUpperCase();
+}
+
+/* ============================================================
+   BLOCO 10 — LÓGICA DO DASHBOARD DO GESTOR
+   ============================================================ */
+async function carregarDashboard() {
+  const listaFadiga = document.getElementById("lista-fadiga");
+  listaFadiga.innerHTML = '<p class="p-5 text-tinta/50">Carregando alertas do setor...</p>';
+
+  try {
+    const dados = await chamarApi({ acao: "OBTER_DASHBOARD_GESTOR", idGestor: ID_GESTOR });
+    renderizarKpis(dados.kpis || []);
+    renderizarFadiga(dados.fadiga || []);
+    renderizarNrs(dados.nrs || []);
+    renderizarEpiPendente(dados.epi_pendente || []);
+    document.getElementById("dash-atualizado").textContent = new Date().toLocaleString("pt-BR");
+  } catch (erro) {
+    listaFadiga.innerHTML = '<p class="p-5 text-bloqueado">Não foi possível carregar o painel: ' + erro.message + '</p>';
+  }
+}
+
+function renderizarKpis(kpis) {
+  const cores = { critico: "border-bloqueado", alerta: "border-atencao", neutro: "border-tinta/20" };
+  document.getElementById("dash-kpis").innerHTML = kpis.map(kpi => `
+    <div class="bg-white border-l-4 ${cores[kpi.tom] || cores.neutro} border-y border-r border-tinta/10 p-5">
+      <p class="text-[11px] font-mono tracking-wide text-tinta/50 uppercase">${kpi.rotulo}</p>
+      <p class="font-display text-5xl font-black mt-1 tabular-nums">${kpi.valor}</p>
+      <p class="text-xs text-tinta/55 mt-1">${kpi.nota}</p>
+    </div>`).join("");
+}
+
+function renderizarFadiga(alertas) {
+  const lista = document.getElementById("lista-fadiga");
+  if (!alertas.length) {
+    lista.innerHTML = '<p class="p-5 text-tinta/55">Nenhum colaborador em nível alto ou crítico neste turno.</p>';
+    return;
+  }
+
+  lista.innerHTML = alertas.map(a => {
+    const critico = a.nivel === "CRITICO";
+    return `
+    <article class="p-5">
+      <div class="flex flex-wrap items-start gap-3">
+        <div class="flex-1 min-w-[12rem]">
+          <p class="font-display text-2xl font-bold leading-tight">${a.nome}</p>
+          <p class="text-xs font-mono text-tinta/50">${a.funcao} · matrícula ${a.id_funcionario}</p>
+        </div>
+        <span class="px-3 py-1 font-display font-black text-sm tracking-widest text-white ${critico ? 'bg-bloqueado' : 'bg-atencao'}">
+          ${critico ? 'CRÍTICO' : 'ALTO'}
+        </span>
+      </div>
+      <ul class="mt-3 flex flex-wrap gap-2">
+        ${a.indicadores.map(i => `<li class="text-xs font-mono bg-tinta/5 border border-tinta/10 px-2 py-1">${i}</li>`).join("")}
+      </ul>
+      <p class="mt-3 text-sm"><span class="font-semibold">Recomendação: </span>${a.recomendacao}</p>
+      <button class="btn-acao mt-3 px-4 py-2 border-2 border-tinta font-display font-bold text-sm tracking-wide hover:bg-tinta hover:text-white transition"
+              data-id="${a.id_funcionario}">
+        REGISTRAR AÇÃO PREVENTIVA
+      </button>
+    </article>`;
+  }).join("");
+
+  lista.querySelectorAll(".btn-acao").forEach(botao => {
+    botao.addEventListener("click", async () => {
+      botao.disabled = true;
+      botao.textContent = "REGISTRANDO...";
+      try {
+        await chamarApi({ acao: "REGISTRAR_ACAO_PREVENTIVA", idGestor: ID_GESTOR, idFuncionario: botao.dataset.id });
+        botao.textContent = "AÇÃO REGISTRADA ✓";
+        botao.className = "mt-3 px-4 py-2 border-2 border-liberado text-liberado font-display font-bold text-sm tracking-wide";
+      } catch (erro) {
+        botao.disabled = false;
+        botao.textContent = "TENTAR NOVAMENTE";
+      }
+    });
+  });
+}
+
+function renderizarNrs(nrs) {
+  document.getElementById("lista-nrs").innerHTML = nrs.map(nr => {
+    const total = nr.validos + nr.vencendo + nr.vencidos || 1;
+    const pct = n => (n / total * 100).toFixed(1) + "%";
+    return `
+    <div>
+      <div class="flex items-baseline justify-between">
+        <p class="font-display text-lg font-bold">${nr.norma} <span class="font-sans text-xs font-normal text-tinta/50">${nr.tema}</span></p>
+        <p class="font-mono text-xs ${nr.vencidos ? 'text-bloqueado font-semibold' : 'text-tinta/50'}">
+          ${nr.vencidos} vencido(s)
+        </p>
+      </div>
+      <div class="mt-2 h-3 w-full flex overflow-hidden bg-tinta/10">
+        <div style="width:${pct(nr.validos)}"  class="bg-liberado"></div>
+        <div style="width:${pct(nr.vencendo)}" class="bg-atencao"></div>
+        <div style="width:${pct(nr.vencidos)}" class="bg-bloqueado"></div>
+      </div>
+      <p class="mt-1 text-[11px] font-mono text-tinta/45">
+        ${nr.validos} válidos · ${nr.vencendo} vencendo em 30d · ${nr.vencidos} vencidos
+      </p>
+    </div>`;
+  }).join("");
+}
+
+function renderizarEpiPendente(pendencias) {
+  document.getElementById("lista-epi-pendente").innerHTML = pendencias.map(p => `
+    <div class="px-5 py-3">
+      <p class="font-semibold">${p.nome}</p>
+      <p class="text-xs text-tinta/60">${p.item} — <span class="text-bloqueado font-medium">${p.situacao}</span></p>
+    </div>`).join("");
+}
+
+/* ============================================================
+   BLOCO 11 — INICIALIZAÇÃO
+   ============================================================ */
+document.getElementById("btn-limpar").addEventListener("click", () => { cracha = ""; atualizarVisor(); mensagem.textContent = ""; });
+document.getElementById("btn-validar").addEventListener("click", validarAcesso);
+document.getElementById("btn-solicitar-epi").addEventListener("click", abrirCatalogoEpi);
+document.getElementById("btn-encerrar").addEventListener("click", reiniciarTotem);
+document.getElementById("btn-voltar-epi").addEventListener("click", () => mostrarEtapa("etapa-resultado"));
+document.getElementById("btn-finalizar").addEventListener("click", reiniciarTotem);
+document.getElementById("btn-atualizar").addEventListener("click", carregarDashboard);
+document.querySelectorAll(".btn-perfil").forEach(b => b.addEventListener("click", () => trocarPerfil(b.dataset.perfil)));
+
+montarTeclado();
+atualizarVisor();
+atualizarRelogio();
+setInterval(atualizarRelogio, 20000);
+
+document.getElementById("selo-modo").classList.toggle("hidden", !!API_URL);
+document.getElementById("selo-modo-texto").textContent = API_URL ? "CONECTADO" : "MODO SIMULAÇÃO";
+
+trocarPerfil("FUNCIONARIO");
+</script>
+</body>
+</html>

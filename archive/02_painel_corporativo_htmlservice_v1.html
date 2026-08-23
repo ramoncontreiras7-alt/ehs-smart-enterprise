@@ -1,0 +1,360 @@
+﻿<!--
+  ============================================================
+  ARQUIVO: Index.html
+  Cole este conteúdo no arquivo "Index.html" do seu projeto
+  Apps Script (Extensões > Apps Script > + > HTML > "Index").
+
+  Este arquivo assume que o Code.gs já expõe:
+    function obterContextoUsuario() { ... }   // SEM parâmetro
+    function api_DashboardGestor() { ... }
+    function api_PainelDiretoria() { ... }
+    function api_RegistrarAcaoPreventiva(idFuncionario, params) { ... }
+    // params = { matriculaSolicitante, alerta, recomendacao }
+
+  E que o Code.gs tem uma função doGet(e) servindo este arquivo
+  (bloco "COLE NO Code.gs" no final deste comentário).
+  ============================================================
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EHS Smart Enterprise — Painel Corporativo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;900&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    theme: { extend: {
+      colors: {
+        concreto:'#E8E5DF', tinta:'#12161A', borda:'#D8D5CC',
+        liberado:'#19A974', bloqueado:'#E03A2F', atencao:'#F08C1E', sinal:'#FFB000'
+      },
+      fontFamily: {
+        display: ['"Saira Condensed"','sans-serif'],
+        sans: ['"IBM Plex Sans"','sans-serif'],
+        mono: ['"IBM Plex Mono"','monospace']
+      }
+    }}
+  }
+</script>
+<style>
+  .faixa { background-image: repeating-linear-gradient(45deg, currentColor 0 14px, transparent 14px 28px); }
+  :focus-visible { outline: 3px solid #FFB000; outline-offset: 3px; }
+  @keyframes surgir { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+  .surgir { animation: surgir .28s ease-out both; }
+  @media (prefers-reduced-motion: reduce) { .surgir { animation:none } }
+</style>
+</head>
+<body class="font-sans bg-concreto text-tinta antialiased min-h-screen">
+
+<!-- ============================================================
+     ESTADO 1 — CARREGANDO (visível até obterContextoUsuario voltar)
+     ============================================================ -->
+<div id="tela-carregando" class="min-h-screen grid place-items-center">
+  <div class="text-center">
+    <div class="w-10 h-10 border-4 border-tinta/15 border-t-tinta rounded-full animate-spin mx-auto"></div>
+    <p class="mt-4 font-display text-lg tracking-wide text-tinta/60">VALIDANDO SESSÃO CORPORATIVA...</p>
+  </div>
+</div>
+
+<!-- ============================================================
+     ESTADO 2 — ACESSO NEGADO
+     (e-mail da sessão não corresponde a nenhum colaborador ativo,
+      ou perfil_rbac não permite painel corporativo)
+     ============================================================ -->
+<div id="tela-negado" class="hidden min-h-screen grid place-items-center px-6">
+  <div class="max-w-md text-center border-4 border-bloqueado bg-white p-8">
+    <div class="h-3 faixa text-bloqueado mb-6"></div>
+    <p class="font-display text-4xl font-black text-bloqueado">ACESSO NEGADO</p>
+    <p class="mt-3 text-tinta/70" id="negado-motivo">Sua conta Google não tem permissão para abrir este painel.</p>
+    <p class="mt-4 text-xs font-mono text-tinta/45" id="negado-email">—</p>
+  </div>
+</div>
+
+<!-- ============================================================
+     ESTADO 3 — PAINEL AUTENTICADO
+     ============================================================ -->
+<div id="tela-painel" class="hidden">
+
+  <header class="sticky top-0 z-50 bg-white border-b border-borda">
+    <div class="h-1 faixa text-sinal opacity-70"></div>
+    <div class="px-4 py-3 flex flex-wrap items-center gap-3 max-w-7xl mx-auto">
+      <div class="flex items-center gap-3 mr-auto">
+        <div class="w-9 h-9 grid place-items-center bg-tinta text-white font-display font-black text-lg">EHS</div>
+        <div class="leading-tight">
+          <p class="font-display font-bold tracking-wide text-sm">PAINEL CORPORATIVO</p>
+          <p class="text-[11px] text-tinta/45 font-mono" id="cabecalho-escopo">—</p>
+        </div>
+      </div>
+
+      <!-- Identidade real da sessão — não é mais um alternador manual -->
+      <div class="flex items-center gap-2 pl-3 border-l border-borda">
+        <div class="w-8 h-8 rounded-full bg-tinta/10 grid place-items-center font-display font-bold text-sm" id="usuario-iniciais">--</div>
+        <div class="leading-tight">
+          <p class="text-xs font-semibold" id="usuario-nome">—</p>
+          <p class="text-[10px] text-tinta/45 font-mono uppercase" id="usuario-papel">—</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Banner de avisos: rebaixamento de nível por inconsistência cadastral.
+       Isto vem do array `avisos` de obterContextoUsuario e nunca é silenciado
+       automaticamente — o usuário precisa saber por que vê menos do que esperava. -->
+  <div id="banner-avisos" class="hidden max-w-7xl mx-auto mt-4 px-4"></div>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 surgir">
+
+    <!-- Visão GESTOR / SST: dashboard nominal completo -->
+    <section id="secao-dashboard-gestor" class="hidden">
+      <div class="flex items-end justify-between border-b-2 border-tinta/10 pb-4 mb-6">
+        <div>
+          <p class="text-[11px] font-mono tracking-widest text-tinta/50">DASHBOARD DO GESTOR</p>
+          <h1 class="font-display text-4xl font-black tracking-tight" id="dash-titulo-setor">—</h1>
+        </div>
+        <button id="btn-atualizar-gestor" class="px-4 py-2 bg-tinta text-white font-display font-bold text-sm tracking-wide hover:bg-tinta/80 transition">
+          ATUALIZAR
+        </button>
+      </div>
+      <div id="dash-conteudo" class="text-tinta/60 text-sm">Carregando indicadores do setor...</div>
+    </section>
+
+    <!-- Visão DIRETORIA: painel agregado, sem nomes, sem score individual -->
+    <section id="secao-painel-diretoria" class="hidden">
+      <div class="flex items-end justify-between border-b-2 border-tinta/10 pb-4 mb-6">
+        <div>
+          <p class="text-[11px] font-mono tracking-widest text-tinta/50">VISÃO EXECUTIVA</p>
+          <h1 class="font-display text-4xl font-black tracking-tight">ÍNDICES POR SETOR</h1>
+        </div>
+        <span class="text-[11px] font-mono text-tinta/45 border border-tinta/15 px-2 py-1">
+          Dado agregado · sem identificação individual
+        </span>
+      </div>
+      <div id="diretoria-conteudo" class="text-tinta/60 text-sm">Carregando índices...</div>
+    </section>
+
+    <!-- Nenhuma seção liberada: perfil autenticado mas sem escopo aqui -->
+    <section id="secao-sem-escopo" class="hidden text-center py-20">
+      <p class="font-display text-2xl font-bold text-tinta/40">Nenhum painel disponível para o seu perfil</p>
+      <p class="text-sm text-tinta/40 mt-2">Fale com o SST se isso não for esperado.</p>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ============================================================
+   BOOTSTRAP — substitui o antigo alternador visual de perfil.
+   A identidade e as permissões vêm do servidor, nunca do cliente.
+   ============================================================ */
+
+let CONTEXTO = null;
+
+function iniciar() {
+  google.script.run
+    .withSuccessHandler(aoReceberContexto)
+    .withFailureHandler(aoFalharContexto)
+    .obterContextoUsuario();
+}
+
+function aoFalharContexto(erro) {
+  document.getElementById("tela-carregando").classList.add("hidden");
+  document.getElementById("tela-negado").classList.remove("hidden");
+  document.getElementById("negado-motivo").textContent =
+    "Falha ao validar a sessão: " + (erro && erro.message ? erro.message : erro);
+}
+
+function aoReceberContexto(contexto) {
+  CONTEXTO = contexto;
+  document.getElementById("tela-carregando").classList.add("hidden");
+
+  if (!contexto || !contexto.autenticado) {
+    document.getElementById("tela-negado").classList.remove("hidden");
+    // Quando não autenticado, o whitelist devolve só {autenticado:false, erro:...} —
+    // não há matricula/nome/email para exibir. Mostra o erro do backend no lugar do e-mail.
+    document.getElementById("negado-email").textContent = (contexto && contexto.erro) || "";
+    return;
+  }
+
+  const permissoes = contexto.permissoes || {};
+  const podeAlgumaCoisa = permissoes.ve_dashboard_gestor || permissoes.ve_painel_diretoria;
+
+  if (!podeAlgumaCoisa) {
+    document.getElementById("tela-negado").classList.remove("hidden");
+    document.getElementById("negado-motivo").textContent =
+      "Seu perfil (" + (contexto.perfil_rbac || "—") + ") não tem acesso a painéis corporativos.";
+    document.getElementById("negado-email").textContent = contexto.matricula || "";
+    return;
+  }
+
+  montarCabecalho(contexto);
+  montarAvisos(contexto.avisos || []);
+
+  document.getElementById("tela-painel").classList.remove("hidden");
+
+  if (permissoes.ve_dashboard_gestor) {
+    document.getElementById("secao-dashboard-gestor").classList.remove("hidden");
+    carregarDashboardGestor();
+  } else if (permissoes.ve_painel_diretoria) {
+    document.getElementById("secao-painel-diretoria").classList.remove("hidden");
+    carregarPainelDiretoria();
+  } else {
+    document.getElementById("secao-sem-escopo").classList.remove("hidden");
+  }
+}
+
+function montarCabecalho(ctx) {
+  const iniciais = (ctx.nome_completo || "??").split(" ").filter(Boolean).slice(0, 2).map(p => p[0]).join("").toUpperCase();
+  document.getElementById("usuario-iniciais").textContent = iniciais || "--";
+  document.getElementById("usuario-nome").textContent = ctx.nome_completo || ctx.matricula || "—";
+  document.getElementById("usuario-papel").textContent = (ctx.perfil_rbac || "—") + " · " + (ctx.nivel_hierarquico || "—");
+  document.getElementById("cabecalho-escopo").textContent = ctx.matricula || "";
+}
+
+/* Avisos de rebaixamento de nível nunca são engolidos silenciosamente.
+   O Dossiê trata acesso como algo que deve ser rastreável e explicável —
+   isso vale também para o usuário entender por que vê menos do que esperava. */
+function montarAvisos(avisos) {
+  const banner = document.getElementById("banner-avisos");
+  if (!avisos.length) { banner.classList.add("hidden"); return; }
+
+  banner.classList.remove("hidden");
+  banner.innerHTML = avisos.map(a => `
+    <div class="bg-atencao/10 border border-atencao text-atencao px-4 py-3 text-sm font-medium mb-2">
+      ${a}
+    </div>`).join("");
+}
+
+/* ============================================================
+   DASHBOARD DO GESTOR / SST — dado nominal completo
+   ============================================================ */
+function carregarDashboardGestor() {
+  document.getElementById("dash-conteudo").textContent = "Carregando indicadores do setor...";
+  google.script.run
+    .withSuccessHandler(renderizarDashboardGestor)
+    .withFailureHandler(erro => {
+      document.getElementById("dash-conteudo").innerHTML =
+        '<p class="text-bloqueado">Não foi possível carregar: ' + erro.message + '</p>';
+    })
+    .api_DashboardGestor();
+}
+
+function renderizarDashboardGestor(dados) {
+  document.getElementById("dash-titulo-setor").textContent = dados.setor || "Setor";
+
+  const alertas = (dados.fadiga || []).map(a => {
+    const critico = a.nivel === "CRITICO";
+    return `
+    <article class="bg-white border border-borda p-5 mb-3">
+      <div class="flex flex-wrap items-start gap-3">
+        <div class="flex-1 min-w-[12rem]">
+          <p class="font-display text-2xl font-bold leading-tight">${a.nome}</p>
+          <p class="text-xs font-mono text-tinta/50">${a.funcao} · matrícula ${a.id_funcionario}</p>
+        </div>
+        <span class="px-3 py-1 font-display font-black text-sm tracking-widest text-white ${critico ? 'bg-bloqueado' : 'bg-atencao'}">
+          ${critico ? 'CRÍTICO' : 'ALTO'}
+        </span>
+      </div>
+      <p class="mt-3 text-sm"><span class="font-semibold">Recomendação: </span>${a.recomendacao}</p>
+      <button class="btn-acao mt-3 px-4 py-2 border-2 border-tinta font-display font-bold text-sm tracking-wide hover:bg-tinta hover:text-white transition"
+              data-id="${a.id_funcionario}"
+              data-alerta="${a.nivel || ''}"
+              data-recomendacao="${(a.recomendacao || '').replace(/"/g, '&quot;')}">
+        REGISTRAR AÇÃO PREVENTIVA
+      </button>
+    </article>`;
+  }).join("") || '<p class="text-tinta/50">Nenhum alerta de fadiga alto ou crítico neste turno.</p>';
+
+  document.getElementById("dash-conteudo").innerHTML = `
+    <div>
+      <h2 class="font-display text-xl font-bold mb-3">Alertas preditivos de fadiga</h2>
+      ${alertas}
+    </div>`;
+
+  document.querySelectorAll(".btn-acao").forEach(botao => {
+    botao.addEventListener("click", () => {
+      botao.disabled = true;
+      botao.textContent = "REGISTRANDO...";
+
+      // Identidade do solicitante vem do contexto carregado pelo backend.
+      // Sem fallback client-side: se CONTEXTO sumiu, deixa o backend rejeitar.
+      const matriculaSolicitante = (CONTEXTO && CONTEXTO.matricula) || '';
+
+      google.script.run
+        .withSuccessHandler(() => {
+          botao.textContent = "AÇÃO REGISTRADA ✓";
+          botao.className = "mt-3 px-4 py-2 border-2 border-liberado text-liberado font-display font-bold text-sm tracking-wide";
+        })
+        .withFailureHandler(erro => {
+          botao.disabled = false;
+          botao.textContent = "TENTAR NOVAMENTE";
+          console.error("api_RegistrarAcaoPreventiva falhou:", erro);
+        })
+        .api_RegistrarAcaoPreventiva(botao.dataset.id, {
+          matriculaSolicitante: matriculaSolicitante,
+          alerta: botao.dataset.alerta || '',
+          recomendacao: botao.dataset.recomendacao || ''
+        });
+    });
+  });
+}
+
+/* ============================================================
+   PAINEL DIRETORIA — agregado por setor, sem nomes
+   ============================================================ */
+function carregarPainelDiretoria() {
+  document.getElementById("diretoria-conteudo").textContent = "Carregando índices...";
+  google.script.run
+    .withSuccessHandler(renderizarPainelDiretoria)
+    .withFailureHandler(erro => {
+      document.getElementById("diretoria-conteudo").innerHTML =
+        '<p class="text-bloqueado">Não foi possível carregar: ' + erro.message + '</p>';
+    })
+    .api_PainelDiretoria();
+}
+
+function renderizarPainelDiretoria(dados) {
+  const linhas = (dados.setores || []).map(s => `
+    <div class="bg-white border border-borda p-5">
+      <p class="font-display text-lg font-bold">${s.nome}</p>
+      <p class="font-mono text-3xl font-black mt-2 tabular-nums">${s.percentual_fadiga_critica}%</p>
+      <p class="text-xs text-tinta/50 mt-1">do efetivo em fadiga crítica</p>
+    </div>`).join("") || '<p class="text-tinta/50">Sem dados agregados no momento.</p>';
+
+  document.getElementById("diretoria-conteudo").innerHTML =
+    `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">${linhas}</div>`;
+}
+
+document.getElementById("btn-atualizar-gestor")?.addEventListener("click", carregarDashboardGestor);
+
+iniciar();
+</script>
+</body>
+</html>
+
+<!--
+  ============================================================
+  COLE NO Code.gs (fora do bloco RBAC, junto das demais funções
+  de entrada do painel corporativo):
+  ============================================================
+
+  function doGet(e) {
+    return HtmlService.createTemplateFromFile('Index')
+      .evaluate()
+      .setTitle('EHS Smart Enterprise — Painel Corporativo')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  Publique em Implantar > Nova implantação > Aplicativo da Web:
+    Executar como: Eu (sua conta — nunca "usuário que acessa")
+    Quem pode acessar: Qualquer pessoa da [seu domínio Workspace]
+
+  IMPORTANTE: "Quem pode acessar" restrito ao domínio é o que impede
+  que um e-mail fora da empresa sequer chegue a abrir a tela. Isso é
+  a primeira camada; obterContextoUsuario() é a segunda, validando
+  o e-mail contra a aba Funcionarios.
+  ============================================================
+-->

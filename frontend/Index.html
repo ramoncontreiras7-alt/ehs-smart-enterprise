@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EHS Smart Enterprise — Centro de Comando</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #1a1d24;
+      --border: #2a2f3a;
+      --text: #e6e8ee;
+      --muted: #9aa4ae;
+      --accent: #2563eb;
+      --accent2: #7c3aed;
+      --danger: #dc2626;
+      --warn: #f59e0b;
+      --ok: #16a34a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    /* LOGIN */
+    #login-screen {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0f1115 0%, #1a1d24 100%);
+    }
+    .login-card {
+      width: 100%; max-width: 420px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .login-card h1 { font-size: 22px; margin-bottom: 6px; letter-spacing: -.01em; }
+    .login-card p { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+    .login-card input {
+      width: 100%; padding: 14px 16px; margin-bottom: 12px;
+      background: #0f1115; color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px;
+      font-size: 15px; outline: none;
+    }
+    .login-card input:focus { border-color: var(--accent); }
+    .login-card button {
+      width: 100%; padding: 14px;
+      background: var(--accent); color: white; border: none; border-radius: 10px;
+      font-weight: 700; font-size: 15px; cursor: pointer;
+    }
+    .login-card button:hover { background: #1d4ed8; }
+    #feedback { color: var(--danger); font-size: 13px; margin-top: 12px; min-height: 18px; }
+
+    /* DASHBOARD */
+    #dashboard-screen { display: none; min-height: 100vh; }
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(15,17,21,.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap;
+    }
+    .brand { font-weight: 800; font-size: 16px; letter-spacing: .02em; }
+    .brand span { color: var(--accent); }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; }
+    nav button {
+      background: transparent; color: var(--muted); border: 1px solid transparent;
+      padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600;
+    }
+    nav button:hover { color: var(--text); background: rgba(255,255,255,.04); }
+    nav button.active { color: var(--text); background: rgba(37,99,235,.12); border-color: rgba(37,99,235,.3); }
+    .header-right { display: flex; align-items: center; gap: 14px; }
+    #relogio-brasilia {
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 13px; color: var(--muted);
+      background: rgba(255,255,255,.04); padding: 8px 12px; border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .btn-sair {
+      background: var(--danger); color: white; border: none;
+      padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 13px;
+    }
+
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+    .secao { display: none; animation: fade .25s ease; }
+    .secao.ativa { display: block; }
+    @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* KPIs */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px; margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 20px;
+      position: relative; overflow: hidden;
+    }
+    .kpi-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+    .kpi-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+    .kpi-value { font-size: 32px; font-weight: 800; letter-spacing: -.02em; }
+    .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+    /* CARDS / PAINÉIS */
+    .painel {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 20px; margin-bottom: 20px;
+    }
+    .painel h3 {
+      font-size: 14px; text-transform: uppercase; letter-spacing: .08em;
+      color: var(--muted); margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+    }
+    .painel h3 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-ok { background: var(--ok); box-shadow: 0 0 8px rgba(22,163,74,.5); }
+    .dot-warn { background: var(--warn); box-shadow: 0 0 8px rgba(245,158,11,.5); }
+    .dot-danger { background: var(--danger); box-shadow: 0 0 8px rgba(220,38,38,.5); }
+
+    /* MODO XERIFE */
+    .xerife-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+    }
+    @media (max-width: 900px) { .xerife-grid { grid-template-columns: 1fr; } }
+    .search-row {
+      display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .search-row input, .search-row select {
+      flex: 1; padding: 12px 14px;
+      background: #0f1115; color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px; font-size: 14px;
+      min-width: 180px;
+    }
+    .search-row input:focus, .search-row select:focus { border-color: var(--accent); outline: none; }
+    .search-row button {
+      padding: 12px 18px; background: var(--accent); color: white; border: none;
+      border-radius: 10px; font-weight: 700; cursor: pointer;
+    }
+    .alerta-card {
+      background: rgba(220,38,38,.08); border: 1px solid rgba(220,38,38,.25);
+      border-radius: 10px; padding: 14px; margin-bottom: 10px;
+    }
+    .alerta-card.warn { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.25); }
+    .alerta-card .alerta-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+    .alerta-card .alerta-body { font-size: 13px; color: var(--muted); }
+    .historico-linha {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+    }
+    .historico-linha:last-child { border-bottom: none; }
+    .badge {
+      display: inline-block; padding: 3px 8px; border-radius: 6px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+    }
+    .badge-ok { background: rgba(22,163,74,.15); color: var(--ok); }
+    .badge-warn { background: rgba(245,158,11,.15); color: var(--warn); }
+    .badge-danger { background: rgba(220,38,38,.15); color: var(--danger); }
+
+    /* TABELA */
+    .tabela-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .06em; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+
+    /* CHARTS */
+    .charts-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px;
+    }
+    .chart-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 18px;
+    }
+    .chart-card h4 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 12px; }
+    .chart-wrap { position: relative; height: 320px; }
+
+    /* LOADING */
+    .loading { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
+    .empty { text-align: center; padding: 30px; color: var(--muted); font-size: 13px; }
+    .hidden { display: none !important; }
+
+    /* AVISOS DO SISTEMA */
+    .aviso-bar {
+      background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3);
+      color: var(--warn); padding: 10px 14px; border-radius: 10px;
+      font-size: 13px; margin-bottom: 16px;
+    }
+
+    /* EXPORT */
+    .export-row {
+      display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .btn-export {
+      padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border);
+      background: rgba(255,255,255,.04); color: var(--text); cursor: pointer;
+      font-weight: 600; font-size: 13px;
+    }
+    .btn-export:hover { background: rgba(255,255,255,.08); }
+
+    /* FILTROS */
+    .filter-row {
+      display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .filter-row input, .filter-row select {
+      padding: 10px 12px;
+      background: #0f1115; color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; font-size: 13px;
+      min-width: 160px;
+    }
+    .filter-row input:focus, .filter-row select:focus { border-color: var(--accent); outline: none; }
+    .filter-row button {
+      padding: 10px 16px; background: var(--accent); color: white; border: none;
+      border-radius: 8px; font-weight: 700; cursor: pointer;
+    }
+
+    /* IMPRESSÃO / PDF */
+    @media print {
+      body { background: #fff; color: #000; }
+      header, nav, .btn-sair, .btn-export, .search-row, .filter-row { display: none !important; }
+      .secao { display: none !important; }
+      .secao.ativa { display: block !important; }
+      .painel, .kpi-card, .chart-card { background: #fff; border: 1px solid #ccc; color: #000; }
+      .alerta-card { background: #f8f8f8; border: 1px solid #ccc; color: #000; }
+      th, td { border-bottom: 1px solid #ccc; }
+      .badge { border: 1px solid #999; color: #000; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <h1>EHS Smart Enterprise</h1>
+    <p>Centro de Comando · Acesso restrito</p>
+    <input type="text" id="identificador" placeholder="Matrícula ou E-mail">
+    <input type="password" id="senha" placeholder="Senha do sistema">
+    <button onclick="fazerLogin()">ACESSAR</button>
+    <div id="feedback"></div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard-screen">
+  <header>
+    <div class="brand">EHS <span>CENTRO DE COMANDO</span></div>
+    <nav>
+      <button class="active" onclick="mudarAba('dashboard', this)">Painel</button>
+      <button onclick="mudarAba('xerife', this)">Modo Xerife</button>
+      <button onclick="mudarAba('almox', this)">Almoxarifado</button>
+      <button onclick="mudarAba('graficos', this)">Gamificação</button>
+      <button id="nav-config" onclick="mudarAba('config', this)" style="display:none">Configurações</button>
+    </nav>
+    <div class="header-right">
+      <div id="relogio-brasilia">--/--/---- --:--:--</div>
+      <button class="btn-sair" onclick="sair()">SAIR</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="avisos-sistema"></div>
+
+    <!-- ABA: PAINEL -->
+    <section id="aba-dashboard" class="secao ativa">
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Funcionários Ativos</div>
+          <div class="kpi-value" id="kpi-ativos">--</div>
+          <div class="kpi-sub">Natos + Terceirizados</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Conformidade NR</div>
+          <div class="kpi-value" id="kpi-conformidade">--%</div>
+          <div class="kpi-sub">Índice geral da planta</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Conservação EPI</div>
+          <div class="kpi-value" id="kpi-conservacao">--%</div>
+          <div class="kpi-sub">Aproveitamento médio</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Alertas Críticos</div>
+          <div class="kpi-value" id="kpi-alertas">--</div>
+          <div class="kpi-sub">Pendências em aberto</div>
+        </div>
+      </div>
+
+      <div class="xerife-grid">
+        <div class="painel">
+          <h3><span class="dot dot-danger"></span> Alertas do Supervisor</h3>
+          <div id="painel-alertas-dashboard"><div class="loading">Carregando...</div></div>
+        </div>
+        <div class="painel">
+          <h3><span class="dot dot-warn"></span> Pendências de NR / EPI</h3>
+          <div id="painel-pendencias-dashboard"><div class="loading">Carregando...</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABA: MODO XERIFE -->
+    <section id="aba-xerife" class="secao">
+      <div class="painel">
+        <h3><span class="dot dot-danger"></span> Modo Xerife — Auditoria e Histórico</h3>
+        <div class="filter-row">
+          <input type="text" id="filter-termo" placeholder="Buscar por matrícula, nome ou CPF...">
+          <select id="filter-setor">
+            <option value="">Todos os setores</option>
+            <option value="SET-01">SET-01</option>
+            <option value="SET-02">SET-02</option>
+            <option value="SET-03">SET-03</option>
+            <option value="SET-04">SET-04</option>
+          </select>
+          <select id="filter-criticidade">
+            <option value="">Todas as criticidades</option>
+            <option value="CRITICO">Crítico</option>
+            <option value="ALTO">Alto</option>
+            <option value="MODERADO">Moderado</option>
+            <option value="BAIXO">Baixo</option>
+          </select>
+          <button onclick="aplicarFiltrosXerife()">APLICAR FILTROS</button>
+        </div>
+        <div id="resultado-historico"></div>
+      </div>
+      <div class="painel">
+        <h3><span class="dot dot-warn"></span> Alertas Pendentes do Supervisor</h3>
+        <div id="painel-alertas-xerife"><div class="loading">Carregando...</div></div>
+      </div>
+    </section>
+
+    <!-- ABA: ALMOXARIFADO -->
+    <section id="aba-almox" class="secao">
+      <div class="painel">
+        <h3><span class="dot dot-warn"></span> Relatório Preditivo de Compras</h3>
+        <div class="export-row">
+          <button class="btn-export" onclick="exportarTabelaCSV('tabela-estoque', 'relatorio_estoque')">Exportar CSV</button>
+          <button class="btn-export" onclick="window.print()">Imprimir / PDF</button>
+        </div>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Itens com estoque abaixo do mínimo, CA vencido ou sem movimentação recente.</p>
+        <div class="tabela-wrap">
+          <table>
+            <thead>
+              <tr><th>Código</th><th>Nome</th><th>Estoque</th><th>Mínimo</th><th>Status CA</th><th>Alerta</th></tr>
+            </thead>
+            <tbody id="tabela-estoque"><tr><td colspan="6" class="loading">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABA: GRÁFICOS -->
+    <section id="aba-graficos" class="secao">
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h4>Ranking de Maiores Gastadores (EPI)</h4>
+          <div class="chart-wrap"><canvas id="chart-gastadores"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <h4>Funcionários Exemplares (Conservação ≥ 70%)</h4>
+          <div class="chart-wrap"><canvas id="chart-exemplares"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <h4>Rendimento da Gamificação Anti-Fraude</h4>
+          <div class="chart-wrap"><canvas id="chart-gamificacao"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABA: CONFIGURAÇÕES -->
+    <section id="aba-config" class="secao">
+      <div class="painel">
+        <h3><span class="dot dot-warn"></span> Configurações do Sistema</h3>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:18px;">Área restrita ao <strong>MASTER_ADMIN</strong>. Alterações são auditadas.</p>
+        <div style="max-width:520px;">
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:6px;">Senha atual</label>
+            <input type="password" id="cfg-senha-atual" style="width:100%;padding:12px 14px;background:#0f1115;color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;">
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:6px;">Nova senha (mínimo 6 caracteres)</label>
+            <input type="password" id="cfg-senha-nova" style="width:100%;padding:12px 14px;background:#0f1115;color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;">
+          </div>
+          <div style="margin-bottom:18px;">
+            <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:6px;">Confirmar nova senha</label>
+            <input type="password" id="cfg-senha-confirma" style="width:100%;padding:12px 14px;background:#0f1115;color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;">
+          </div>
+          <button onclick="salvarSenhaCompartilhada()" style="padding:12px 18px;background:var(--accent);color:white;border:none;border-radius:10px;font-weight:700;cursor:pointer;">SALVAR NOVA SENHA</button>
+          <p id="cfg-feedback" style="margin-top:10px;font-size:13px;"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ============================================================
+   EHS SMART ENTERPRISE — Centro de Comando v2.0
+   ============================================================ */
+let ctxUsuario = null;
+const charts = {};
+
+function atualizarRelogioBrasilia() {
+  const agora = new Date();
+  const fmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  });
+  const p = fmt.formatToParts(agora);
+  const get = t => p.find(x => x.type === t).value;
+  const el = document.getElementById('relogio-brasilia');
+  if (el) el.textContent = get('day')+'/'+get('month')+'/'+get('year')+' '+get('hour')+':'+get('minute')+':'+get('second');
+}
+setInterval(atualizarRelogioBrasilia, 1000);
+atualizarRelogioBrasilia();
+
+window.onload = function () {
+  google.script.run
+    .withSuccessHandler(function () {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.autenticado) {
+            ctxUsuario = res;
+            if (res.perfil_rbac === 'MASTER_ADMIN' || res.nivel_hierarquico === 'MASTER_ADMIN') {
+              var navConfig = document.getElementById('nav-config');
+              if (navConfig) navConfig.style.display = '';
+            }
+            entrarPainel(res);
+          } else {
+            document.getElementById('login-screen').style.display = 'flex';
+            document.getElementById('dashboard-screen').style.display = 'none';
+          }
+        })
+        .obterContextoUsuario();
+    })
+    .api_VerificarEGarantirSenhaCompartilhada();
+};
+
+function fazerLogin() {
+  const id = document.getElementById('identificador').value.trim();
+  const pass = document.getElementById('senha').value;
+  document.getElementById('feedback').textContent = 'Autenticando...';
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (res && res.ok) {
+        ctxUsuario = res.contexto;
+        entrarPainel(res.contexto);
+      } else {
+        document.getElementById('feedback').textContent = (res && res.erro) ? res.erro : 'Erro na autenticação.';
+      }
+    })
+    .api_AutenticarComSenha(id, pass);
+}
+
+function sair() { location.reload(); }
+
+function entrarPainel(ctx) {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('dashboard-screen').style.display = 'block';
+  document.getElementById('avisos-sistema').innerHTML = (ctx.avisos && ctx.avisos.length)
+    ? ctx.avisos.map(a => '<div class="aviso-bar">'+escapar(a)+'</div>').join('')
+    : '';
+
+  carregarKPIs();
+  carregarAlertasDashboard();
+  carregarPendencias();
+  carregarEstoque();
+  carregarGastadores();
+  carregarExemplares();
+  carregarGamificacaoChart();
+}
+
+function mudarAba(aba, btn) {
+  document.querySelectorAll('.secao').forEach(s => s.classList.remove('ativa'));
+  document.getElementById('aba-' + aba).classList.add('ativa');
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+/* ── KPIs ── */
+function carregarKPIs() {
+  google.script.run.withSuccessHandler(function (res) {
+    if (!res) return;
+    const total = (res.total_equipe || 0);
+    const conformes = total - (res.kpis && res.kpis.bloqueados ? res.kpis.bloqueados : 0);
+    const percConformidade = total ? Math.round((conformes / total) * 1000) / 10 : 0;
+    document.getElementById('kpi-ativos').textContent = total;
+    document.getElementById('kpi-conformidade').textContent = percConformidade + '%';
+    document.getElementById('kpi-alertas').textContent = (res.kpis && res.kpis.fadiga_critica) || 0;
+  }).api_DashboardGestor(ctxUsuario.matricula);
+
+  google.script.run.withSuccessHandler(function (res) {
+    if (res && res.eficiencia_epi) {
+      const c = Math.round(res.eficiencia_epi.aproveitamento_medio_vida_util * 10) / 10;
+      document.getElementById('kpi-conservacao').textContent = c + '%';
+    }
+  }).api_PainelDiretoria(ctxUsuario.matricula);
+}
+
+/* ── Alertas ── */
+function carregarAlertasDashboard() {
+  google.script.run.withSuccessHandler(function (res) {
+    const el = document.getElementById('painel-alertas-dashboard');
+    if (!res || !res.alertas_fadiga || !res.alertas_fadiga.length) {
+      el.innerHTML = '<div class="empty">Nenhum alerta de fadiga no momento.</div>';
+      return;
+    }
+    el.innerHTML = res.alertas_fadiga.slice(0, 8).map(function (a) {
+      const cls = a.nivel === 'CRITICO' ? 'alerta-card' : 'alerta-card warn';
+      return '<div class="'+cls+'"><div class="alerta-title">'+escapar(a.nome)+' · '+escapar(a.funcao)+'</div>' +
+             '<div class="alerta-body">Score: '+a.score+' · Setor: '+escapar(a.setor)+'<br>'+escapar(a.fatores.join(' | '))+'</div></div>';
+    }).join('');
+  }).api_DashboardGestor(ctxUsuario.matricula);
+
+  google.script.run.withSuccessHandler(function (res) {
+    const el = document.getElementById('painel-alertas-xerife');
+    if (!res || !res.alertas_pendentes || !res.alertas_pendentes.length) {
+      el.innerHTML = '<div class="empty">Nenhum alerta pendente.</div>';
+      return;
+    }
+    el.innerHTML = res.alertas_pendentes.map(function (a) {
+      return '<div class="alerta-card"><div class="alerta-title">'+escapar(a.nome_alvo)+' · '+escapar(a.matricula_alvo)+'</div>' +
+             '<div class="alerta-body">'+escapar(a.alerta)+'<br><small>'+escapar(a.recomendacao)+'</small></div></div>';
+    }).join('');
+  }).api_BuscarAlertasSupervisor(ctxUsuario.matricula);
+}
+
+/* ── Pendências ── */
+function carregarPendencias() {
+  google.script.run.withSuccessHandler(function (res) {
+    const el = document.getElementById('painel-pendencias-dashboard');
+    if (!res || !res.pendencias_epi_nr || !res.pendencias_epi_nr.length) {
+      el.innerHTML = '<div class="empty">Todos os colaboradores estão em conformidade.</div>';
+      return;
+    }
+    el.innerHTML = res.pendencias_epi_nr.slice(0, 8).map(function (p) {
+      const temBloqueio = p.bloqueios && p.bloqueios.length;
+      const cls = temBloqueio ? 'alerta-card' : 'alerta-card warn';
+      return '<div class="'+cls+'"><div class="alerta-title">'+escapar(p.nome)+' · '+escapar(p.matricula)+'</div>' +
+             '<div class="alerta-body">' + (temBloqueio ? p.bloqueios.join('<br>') : p.avisos.join('<br>')) + '</div></div>';
+    }).join('');
+  }).api_DashboardGestor(ctxUsuario.matricula);
+}
+
+/* ── Histórico (Modo Xerife) ── */
+function buscarHistorico() {
+  const mat = document.getElementById('search-mat').value.trim();
+  const el = document.getElementById('resultado-historico');
+  if (!mat) { el.innerHTML = '<div class="empty">Informe uma matrícula.</div>'; return; }
+  el.innerHTML = '<div class="loading">Buscando histórico...</div>';
+  google.script.run.withSuccessHandler(function (res) {
+    if (!res || res.erro) { el.innerHTML = '<div class="empty">'+escapar(res ? res.erro : 'Erro')+'</div>'; return; }
+    let html = '<div style="margin-bottom:12px;font-size:14px;"><strong>'+escapar(res.colaborador.nome)+'</strong> · '+escapar(res.colaborador.setor)+' · <span class="badge badge-ok">'+res.total_movimentacoes+' movimentações</span> · Custo total: R$ '+res.custo_total.toFixed(2)+'</div>';
+    html += '<div class="export-row"><button class="btn-export" onclick="exportarHistoricoCSV()">Exportar CSV</button></div>';
+    html += '<div class="tabela-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>EPI</th><th>Qtd</th><th>Custo</th><th>Totem</th><th>Status</th></tr></thead><tbody>';
+    (res.historico || []).forEach(function (m) {
+      const data = (m.data_hora instanceof Date) ? m.data_hora.toLocaleString('pt-BR') : String(m.data_hora);
+      html += '<tr><td>'+escapar(data)+'</td><td>'+escapar(m.tipo)+'</td><td>'+escapar(m.nome_epi)+'</td><td>'+m.quantidade+'</td><td>R$ '+m.custo_total.toFixed(2)+'</td><td>'+escapar(m.id_totem)+'</td><td>'+escapar(m.status_confirmacao)+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+  }).api_HistoricoColaborador(ctxUsuario.matricula, mat);
+}
+
+/* ── Almoxarifado ── */
+function carregarEstoque() {
+  google.script.run.withSuccessHandler(function (res) {
+    const tbody = document.getElementById('tabela-estoque');
+    if (!res || !res.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Sem dados.</td></tr>'; return; }
+    tbody.innerHTML = res.map(function (i) {
+      const statusCls = i.alerta ? 'badge-danger' : 'badge-ok';
+      const statusText = i.alerta ? 'ALERTA' : 'OK';
+      return '<tr><td>'+escapar(i.codigo)+'</td><td>'+escapar(i.nome)+'</td><td>'+i.estoque+'</td><td>'+i.pontoPedido+'</td><td>'+escapar(i.status_ca)+'</td><td><span class="badge '+statusCls+'">'+statusText+'</span></td></tr>';
+    }).join('');
+  }).api_ListarEstoque();
+}
+
+/* ── Filtros Modo Xerife ── */
+function aplicarFiltrosXerife() {
+  const termo = document.getElementById('filter-termo').value.trim();
+  const setor = document.getElementById('filter-setor').value;
+  const criticidade = document.getElementById('filter-criticidade').value;
+  const el = document.getElementById('resultado-historico');
+
+  if (!termo) { el.innerHTML = '<div class="empty">Informe um termo para busca.</div>'; return; }
+  el.innerHTML = '<div class="loading">Buscando colaborador...</div>';
+
+  google.script.run.withSuccessHandler(function (res) {
+    if (!res || !res.resultados || !res.resultados.length) {
+      el.innerHTML = '<div class="empty">Nenhum colaborador encontrado.</div>';
+      return;
+    }
+    let html = '<div style="margin-bottom:14px;font-size:14px;color:var(--muted);">'+res.resultados.length+' resultado(s)</div>';
+    html += '<div class="tabela-wrap"><table><thead><tr><th>Matrícula</th><th>Nome</th><th>CPF</th><th>Setor</th><th>Função</th><th>Perfil</th><th>Nível</th><th>Vinculo</th></tr></thead><tbody>';
+    res.resultados.forEach(function (r) {
+      html += '<tr><td>'+escapar(r.matricula)+'</td><td>'+escapar(r.nome)+'</td><td>'+escapar(r.cpf)+'</td><td>'+escapar(r.setor)+'</td><td>'+escapar(r.funcao)+'</td><td>'+escapar(r.perfil_rbac)+'</td><td>'+escapar(r.nivel_hierarquico)+'</td><td>'+escapar(r.tipo_vinculo)+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+  }).api_BuscarColaboradorFiltrado(ctxUsuario.matricula, termo);
+}
+
+/* ── Exportação CSV ── */
+function exportarTabelaCSV(tabelaId, nomeArquivo) {
+  const tabela = document.getElementById(tabelaId);
+  if (!tabela) return;
+  let csv = '';
+  const linhas = tabela.querySelectorAll('tr');
+  linhas.forEach(function (linha) {
+    const colunas = linha.querySelectorAll('th, td');
+    const linhaArr = [];
+    colunas.forEach(function (col) { linhaArr.push('"' + (col.textContent || '').replace(/"/g, '""') + '"'); });
+    csv += linhaArr.join(',') + '\n';
+  });
+  downloadBlob(csv, (nomeArquivo || 'export') + '.csv', 'text/csv');
+}
+
+function exportarHistoricoCSV() {
+  const el = document.getElementById('resultado-historico');
+  const tabela = el ? el.querySelector('table') : null;
+  if (!tabela) return;
+  let csv = '';
+  const linhas = tabela.querySelectorAll('tr');
+  linhas.forEach(function (linha) {
+    const colunas = linha.querySelectorAll('th, td');
+    const linhaArr = [];
+    colunas.forEach(function (col) { linhaArr.push('"' + (col.textContent || '').replace(/"/g, '""') + '"'); });
+    csv += linhaArr.join(',') + '\n';
+  });
+  downloadBlob(csv, 'historico_epi.csv', 'text/csv');
+}
+
+function downloadBlob(conteudo, nomeArquivo, mime) {
+  const blob = new Blob([conteudo], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ── Charts ── */
+function carregarGastadores() {
+  google.script.run.withSuccessHandler(function (res) {
+    if (!res || !res.ranking || !res.ranking.length) return;
+    const top = res.ranking.slice(0, 10);
+    new Chart(document.getElementById('chart-gastadores'), {
+      type: 'bar',
+      data: {
+        labels: top.map(x => x.nome.split(' ')[0]),
+        datasets: [{
+          label: 'Custo Total (R$)',
+          data: top.map(x => x.custo_total),
+          backgroundColor: 'rgba(220,38,38,.7)',
+          borderColor: 'rgba(220,38,38,1)',
+          borderWidth: 1, borderRadius: 6
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#9aa4ae' }, grid: { color: 'rgba(255,255,255,.06)' } },
+          y: { ticks: { color: '#9aa4ae' }, grid: { display: false } }
+        }
+      }
+    });
+  }).api_RankingGastadores(ctxUsuario.matricula);
+}
+
+function carregarExemplares() {
+  google.script.run.withSuccessHandler(function (res) {
+    if (!res || !res.exemplares || !res.exemplares.length) return;
+    const top = res.exemplares.slice(0, 10);
+    new Chart(document.getElementById('chart-exemplares'), {
+      type: 'bar',
+      data: {
+        labels: top.map(x => x.nome.split(' ')[0]),
+        datasets: [{
+          label: 'Conservação Média (%)',
+          data: top.map(x => x.conservacao_media),
+          backgroundColor: 'rgba(22,163,74,.7)',
+          borderColor: 'rgba(22,163,74,1)',
+          borderWidth: 1, borderRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { min: 60, max: 100, ticks: { color: '#9aa4ae' }, grid: { color: 'rgba(255,255,255,.06)' } },
+          x: { ticks: { color: '#9aa4ae' }, grid: { display: false } }
+        }
+      }
+    });
+  }).api_FuncionariosExemplares(ctxUsuario.matricula);
+}
+
+function carregarGamificacaoChart() {
+  google.script.run.withSuccessHandler(function (res) {
+    if (!res || !res.vinculos || !res.vinculos.length) return;
+    const top = res.vinculos.slice(0, 10);
+    new Chart(document.getElementById('chart-gamificacao'), {
+      type: 'bar',
+      data: {
+        labels: top.map(x => x.mentor.split(' ')[0]),
+        datasets: [
+          {
+            label: 'Saldo Bônus Mentor',
+            data: top.map(x => x.saldo_bonus_mentor),
+            backgroundColor: 'rgba(37,99,235,.7)',
+            borderColor: 'rgba(37,99,235,1)',
+            borderWidth: 1, borderRadius: 6
+          },
+          {
+            label: 'Evolução Líquida Mentorado',
+            data: top.map(x => x.evolucao_liquida_mentorado),
+            backgroundColor: 'rgba(124,58,237,.7)',
+            borderColor: 'rgba(124,58,237,1)',
+            borderWidth: 1, borderRadius: 6
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#9aa4ae' } } },
+        scales: {
+          y: { ticks: { color: '#9aa4ae' }, grid: { color: 'rgba(255,255,255,.06)' } },
+          x: { ticks: { color: '#9aa4ae' }, grid: { display: false } }
+        }
+      }
+    });
+  }).api_RelatorioGamificacao(ctxUsuario.matricula);
+}
+
+/* ── Configurações de Senha ── */
+function salvarSenhaCompartilhada() {
+  const atual = document.getElementById('cfg-senha-atual').value;
+  const nova = document.getElementById('cfg-senha-nova').value;
+  const confirma = document.getElementById('cfg-senha-confirma').value;
+  const feedback = document.getElementById('cfg-feedback');
+
+  if (!atual || !nova || !confirma) {
+    feedback.style.color = 'var(--danger)';
+    feedback.textContent = 'Preencha todos os campos.';
+    return;
+  }
+  if (nova !== confirma) {
+    feedback.style.color = 'var(--danger)';
+    feedback.textContent = 'A confirmação não confere com a nova senha.';
+    return;
+  }
+  if (nova.length < 6) {
+    feedback.style.color = 'var(--danger)';
+    feedback.textContent = 'A nova senha deve ter ao menos 6 caracteres.';
+    return;
+  }
+
+  feedback.style.color = 'var(--muted)';
+  feedback.textContent = 'Salvando...';
+  google.script.run.withSuccessHandler(function (res) {
+    if (res && res.ok) {
+      feedback.style.color = 'var(--ok)';
+      feedback.textContent = res.mensagem || 'Senha alterada com sucesso.';
+      document.getElementById('cfg-senha-atual').value = '';
+      document.getElementById('cfg-senha-nova').value = '';
+      document.getElementById('cfg-senha-confirma').value = '';
+    } else {
+      feedback.style.color = 'var(--danger)';
+      feedback.textContent = (res && res.erro) ? res.erro : 'Erro ao salvar.';
+    }
+  }).api_AlterarSenhaCompartilhada(atual, nova, ctxUsuario.matricula);
+}
+
+/* ── Utils ── */
+function escapar(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>

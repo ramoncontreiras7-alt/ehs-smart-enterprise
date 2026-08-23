@@ -1,0 +1,855 @@
+/**************************************************************************************************
+ * EHS SMART ENTERPRISE — MOTOR DE REGRAS E INTELIGÊNCIA
+ * Arquivo: Motor_Regras.gs   (colar ao LADO do Code.gs, no mesmo projeto Apps Script)
+ * ------------------------------------------------------------------------------------------------
+ * IMPORTANTE: este arquivo REUTILIZA as funções do Code.gs (lerAba_, normalizar_, valorDe_,
+ * acharColuna_, agora_, gerarId_, registrarLog, CONFIG e COLUNAS). Não duplique nada de lá aqui,
+ * senão o Apps Script acusa "identificador já declarado". Por isso as constantes deste arquivo
+ * têm sufixo _REGRAS.
+ *
+ * O QUE ESTE ARQUIVO FAZ:
+ *   MOTOR 1 — FADIGA (Alerta Preditivo)
+ *       Varre os registros de jornada, calcula 5 indicadores de exaustão com pesos diferentes,
+ *       classifica o risco e publica alerta APENAS para o gestor do setor (id_gestor).
+ *       O relógio de ponto e o totem NUNCA recebem esse dado (Dossiê 3.3.1).
+ *
+ *   MOTOR 2 — GAMIFICAÇÃO ASSIMÉTRICA COOPERATIVA
+ *       Calcula a evolução do mentorado e credita um percentual disso ao mentor.
+ *       REGRA INEGOCIÁVEL: o saldo do mentor tem PISO ZERO e nunca diminui. Infração, extravio
+ *       ou queda de desempenho do mentorado jamais subtrai pontos do mentor (Dossiê 5.5).
+ *
+ * ONDE COLAR: Apps Script > ícone "+" ao lado de Arquivos > Script > nomeie "Motor_Regras".
+ * COMO RODAR: menu de funções do editor > escolha a função > Executar.
+ * COMO AUTOMATIZAR: rode uma única vez a função  instalarGatilhosAutomaticos()
+ **************************************************************************************************/
+
+
+/* ================================================================================================
+ * BLOCO 1 — CONFIGURAÇÃO DO MOTOR
+ * ============================================================================================== */
+
+const CONFIG_REGRAS = {
+  // --- Abas usadas por este motor ---
+  ABA_JORNADA:      'Registros_Ponto',      // fonte dos dados de jornada (ver NOTA DE SCHEMA abaixo)
+  ABA_ALERTAS:      'Alertas_Fadiga',       // destino dos alertas (lido pelo Dashboard do Gestor)
+  ABA_SETORES:      'Setores',              // onde mora o id_gestor de cada setor
+  ABA_GAMIFICACAO:  'Gamificacao_Mentoria',
+
+  // --- Janela de análise de fadiga ---
+  DIAS_ANALISE: 14,                 // olha os últimos 14 dias corridos
+
+  // --- Limites legais e operacionais (base CLT + NR-01) ---
+  LIMITE_JORNADA_LONGA_H:   10,     // jornada diária acima disso conta como prolongada
+  INTERJORNADA_MINIMA_H:    11,     // descanso mínimo entre jornadas (CLT art. 66)
+  MAX_TURNOS_CONSECUTIVOS:   6,     // dias seguidos trabalhados sem folga
+  LIMITE_HE_PERIODO_H:      20,     // horas extras acumuladas na janela de análise
+
+  // --- Pesos dos 5 indicadores (somam 100) ---
+  PESOS: {
+    horasExtras:         30,
+    interjornadaCurta:   25,
+    turnosConsecutivos:  20,
+    jornadaProlongada:   15,
+    atividadesCriticas:  10
+  },
+
+  // --- Faixas de classificação (Dossiê 3.5) ---
+  FAIXA_CRITICO:  70,
+  FAIXA_ALTO:     45,
+  FAIXA_MODERADO: 25,
+
+  // Evita spam: não repete alerta do mesmo funcionário no mesmo nível dentro de X horas
+  JANELA_ANTI_DUPLICIDADE_H: 24,
+
+  // --- Gamificação ---
+  PERCENTUAL_BONUS_MENTOR_PADRAO: 0.20,  // 20% da evolução do mentorado vai para o mentor
+  PISO_SALDO_MENTOR: 0                   // REGRA INEGOCIÁVEL: nunca abaixo de zero
+};
+
+/**
+ * Colunas esperadas (busca por nome, com sinônimos aceitos).
+ *
+ * ⚠ NOTA DE SCHEMA PARA O ARQUITETO DE DADOS:
+ *   As abas 'Registros_Ponto' e 'Alertas_Fadiga' ainda não constam na estrutura validada.
+ *   Rode a função  prepararAbasDoMotor()  uma vez: ela cria as duas abas já com os cabeçalhos
+ *   corretos, sem tocar em nada existente. Depois o Arquiteto formaliza no modelo relacional.
+ */
+const COLUNAS_REGRAS = {
+  JORNADA: {
+    id:               ['id_registro', 'id_ponto', 'id'],
+    idFuncionario:    ['id_funcionario', 'matricula', 'funcionario'],
+    data:             ['data', 'data_registro', 'dia'],
+    entrada:          ['hora_entrada', 'entrada'],
+    saida:            ['hora_saida', 'saida'],
+    horasTrabalhadas: ['horas_trabalhadas', 'total_horas', 'jornada_horas'],
+    horasExtras:      ['horas_extras', 'he', 'hora_extra'],
+    tipoAtividade:    ['tipo_atividade', 'classificacao_atividade', 'atividade']
+  },
+  ALERTAS: {
+    id:            ['id_alerta', 'id'],
+    timestamp:     ['timestamp', 'data_hora'],
+    idFuncionario: ['id_funcionario', 'matricula'],
+    nome:          ['nome_funcionario', 'nome'],
+    setor:         ['setor'],
+    idGestor:      ['id_gestor_destino', 'id_gestor', 'gestor'],
+    nivel:         ['nivel_fadiga', 'nivel'],
+    pontuacao:     ['pontuacao', 'score', 'indice_risco'],
+    indicadores:   ['indicadores', 'detalhamento', 'evidencias'],
+    recomendacao:  ['recomendacao', 'acao_recomendada'],
+    status:        ['status_alerta', 'status'],
+    idLog:         ['id_log_vinculado', 'id_log']
+  },
+  SETORES: {
+    id:       ['id_setor', 'id', 'codigo_setor'],
+    nome:     ['nome_setor', 'setor', 'descricao'],
+    idGestor: ['id_gestor', 'gestor_responsavel', 'matricula_gestor']
+  },
+  GAMIFICACAO: {
+    idRelacao:       ['id_relacao', 'id_mentoria', 'id'],
+    idMentor:        ['id_mentor', 'mentor'],
+    idMentorado:     ['id_mentorado', 'mentorado'],
+    status:          ['status_mentoria', 'status'],
+    percentualBonus: ['percentual_bonus', 'percentual_bonus_mentor', 'percentual'],
+    scoreInicial:    ['score_mentorado_inicial', 'score_inicial'],
+    scoreAtual:      ['score_mentorado_atual', 'score_atual'],
+    evolucao:        ['evolucao_mentorado', 'evolucao'],
+    saldoMentor:     ['saldo_bonus_mentor', 'saldo_mentor', 'pontos_mentor'],
+    ultimoCalculo:   ['data_ultimo_calculo', 'ultimo_calculo'],
+    // ↓ Colunas INFORMATIVAS. Existem para o SST enxergar o cenário do mentorado,
+    //   mas NENHUM cálculo de bônus do mentor pode olhar para elas. Blindagem do Dossiê 5.5.
+    infracoesMentorado: ['infracoes_mentorado', 'infracoes'],
+    extraviosMentorado: ['extravios_mentorado', 'extravios']
+  }
+};
+
+
+/* ================================================================================================
+ * BLOCO 2 — UTILITÁRIOS DO MOTOR
+ * ============================================================================================== */
+
+/** Converte qualquer célula de data (texto ou Date) em objeto Date; devolve null se inválida. */
+function paraData_(valor) {
+  if (!valor) return null;
+  if (valor instanceof Date) return isNaN(valor.getTime()) ? null : valor;
+  var d = new Date(valor);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Converte hora ("07:30", 0.3125 ou Date) em número decimal de horas. */
+function paraHoras_(valor) {
+  if (valor === '' || valor === null || valor === undefined) return null;
+  if (valor instanceof Date) return valor.getHours() + valor.getMinutes() / 60;
+  if (typeof valor === 'number') return valor <= 1 ? valor * 24 : valor;  // fração do dia ou horas
+  var partes = String(valor).split(':');
+  if (partes.length < 2) return Number(valor) || null;
+  return Number(partes[0]) + Number(partes[1]) / 60;
+}
+
+/** Data no formato yyyy-MM-dd, útil para agrupar por dia. */
+function chaveDia_(data) {
+  return Utilities.formatDate(data, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+}
+
+/** Diferença em dias inteiros entre duas datas. */
+function diferencaDias_(dataA, dataB) {
+  return Math.round((dataB.getTime() - dataA.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/** Garante que um valor numérico nunca fique negativo. Usado na blindagem do mentor. */
+function nuncaNegativo_(numero) {
+  var n = Number(numero);
+  if (isNaN(n) || n < 0) return 0;
+  return n;
+}
+
+/**
+ * Cria as abas de apoio do motor, caso ainda não existam, já com os cabeçalhos corretos.
+ * Rode uma única vez. É seguro executar de novo: não sobrescreve nada.
+ */
+function prepararAbasDoMotor() {
+  var planilha = getPlanilha_();
+  var criadas = [];
+
+  if (!planilha.getSheetByName(CONFIG_REGRAS.ABA_JORNADA)) {
+    var jornada = planilha.insertSheet(CONFIG_REGRAS.ABA_JORNADA);
+    jornada.appendRow(['id_registro', 'id_funcionario', 'data', 'hora_entrada', 'hora_saida',
+                       'horas_trabalhadas', 'horas_extras', 'tipo_atividade']);
+    jornada.setFrozenRows(1);
+    criadas.push(CONFIG_REGRAS.ABA_JORNADA);
+  }
+
+  if (!planilha.getSheetByName(CONFIG_REGRAS.ABA_ALERTAS)) {
+    var alertas = planilha.insertSheet(CONFIG_REGRAS.ABA_ALERTAS);
+    alertas.appendRow(['id_alerta', 'timestamp', 'id_funcionario', 'nome_funcionario', 'setor',
+                       'id_gestor_destino', 'nivel_fadiga', 'pontuacao', 'indicadores',
+                       'recomendacao', 'status_alerta', 'id_log_vinculado']);
+    alertas.setFrozenRows(1);
+    criadas.push(CONFIG_REGRAS.ABA_ALERTAS);
+  }
+
+  Logger.log(criadas.length ? 'Abas criadas: ' + criadas.join(', ') : 'Nenhuma aba nova necessária.');
+  return criadas;
+}
+
+
+/* ================================================================================================
+ * BLOCO 3 — MOTOR 1: FADIGA E ALERTA PREDITIVO
+ * ============================================================================================== */
+
+/**
+ * Descobre para qual matrícula de gestor o alerta deve ir.
+ * Procura primeiro em Funcionarios (coluna id_gestor); se não achar, cruza pelo setor na aba Setores.
+ * Se ninguém for encontrado, devolve vazio — e o alerta NÃO é publicado (melhor não gerar do que
+ * expor num painel errado).
+ */
+function localizarGestorDoSetor_(nomeSetor, idGestorDireto) {
+  if (idGestorDireto) return String(idGestorDireto);
+  if (!nomeSetor) return '';
+
+  var setores;
+  try {
+    setores = lerAba_(CONFIG_REGRAS.ABA_SETORES);
+  } catch (e) {
+    return '';
+  }
+
+  var alvo = normalizar_(nomeSetor);
+  for (var i = 0; i < setores.linhas.length; i++) {
+    var linha = setores.linhas[i];
+    var nome = normalizar_(valorDe_(linha, setores.indice, COLUNAS_REGRAS.SETORES.nome));
+    var id   = normalizar_(valorDe_(linha, setores.indice, COLUNAS_REGRAS.SETORES.id));
+    if (alvo === nome || alvo === id) {
+      return String(valorDe_(linha, setores.indice, COLUNAS_REGRAS.SETORES.idGestor) || '');
+    }
+  }
+  return '';
+}
+
+/**
+ * Agrupa os registros de ponto por funcionário dentro da janela de análise.
+ * Retorno: { 'F001': { dias: {...}, horasExtras: 12.5, atividadesCriticas: 3 }, ... }
+ */
+function consolidarJornadas_() {
+  var jornada = lerAba_(CONFIG_REGRAS.ABA_JORNADA);
+  var limite = new Date();
+  limite.setDate(limite.getDate() - CONFIG_REGRAS.DIAS_ANALISE);
+
+  var mapa = {};
+
+  for (var i = 0; i < jornada.linhas.length; i++) {
+    var linha = jornada.linhas[i];
+
+    var idFunc = String(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.idFuncionario) || '').trim();
+    var data   = paraData_(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.data));
+    if (!idFunc || !data || data < limite) continue;
+
+    if (!mapa[idFunc]) {
+      mapa[idFunc] = { dias: {}, horasExtras: 0, atividadesCriticas: 0 };
+    }
+
+    var horas  = Number(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.horasTrabalhadas)) || 0;
+    var extras = Number(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.horasExtras)) || 0;
+    var tipo   = normalizar_(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.tipoAtividade));
+
+    mapa[idFunc].horasExtras += extras;
+    if (tipo.indexOf('CRITIC') !== -1) mapa[idFunc].atividadesCriticas += 1;
+
+    var chave = chaveDia_(data);
+    mapa[idFunc].dias[chave] = {
+      data: data,
+      horas: horas,
+      entrada: paraHoras_(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.entrada)),
+      saida:   paraHoras_(valorDe_(linha, jornada.indice, COLUNAS_REGRAS.JORNADA.saida))
+    };
+  }
+  return mapa;
+}
+
+/**
+ * Calcula os 5 indicadores de exaustão e devolve a pontuação ponderada de 0 a 100.
+ * Cada indicador vira uma fração de 0 a 1 e é multiplicado pelo seu peso.
+ */
+function calcularIndicadoresFadiga_(registro) {
+  var chaves = Object.keys(registro.dias).sort();
+  var dias = chaves.map(function (k) { return registro.dias[k]; });
+
+  // 1) Horas extras acumuladas na janela
+  var fracaoHE = Math.min(1, registro.horasExtras / CONFIG_REGRAS.LIMITE_HE_PERIODO_H);
+
+  // 2) Menor intervalo entre jornadas (interjornada)
+  var menorInterjornada = null;
+  for (var i = 1; i < dias.length; i++) {
+    var anterior = dias[i - 1], atual = dias[i];
+    if (diferencaDias_(anterior.data, atual.data) !== 1) continue;      // só dias consecutivos
+    if (anterior.saida === null || atual.entrada === null) continue;
+    var intervalo = (24 - anterior.saida) + atual.entrada;
+    if (menorInterjornada === null || intervalo < menorInterjornada) menorInterjornada = intervalo;
+  }
+  var fracaoInterjornada = 0;
+  if (menorInterjornada !== null && menorInterjornada < CONFIG_REGRAS.INTERJORNADA_MINIMA_H) {
+    fracaoInterjornada = (CONFIG_REGRAS.INTERJORNADA_MINIMA_H - menorInterjornada) /
+                          CONFIG_REGRAS.INTERJORNADA_MINIMA_H;
+  }
+
+  // 3) Maior sequência de turnos consecutivos sem folga
+  var maiorSequencia = dias.length ? 1 : 0, sequencia = dias.length ? 1 : 0;
+  for (var j = 1; j < dias.length; j++) {
+    if (diferencaDias_(dias[j - 1].data, dias[j].data) === 1) {
+      sequencia += 1;
+      if (sequencia > maiorSequencia) maiorSequencia = sequencia;
+    } else {
+      sequencia = 1;
+    }
+  }
+  var fracaoTurnos = Math.min(1, maiorSequencia / CONFIG_REGRAS.MAX_TURNOS_CONSECUTIVOS);
+
+  // 4) Dias com jornada prolongada
+  var diasLongos = dias.filter(function (d) {
+    return d.horas > CONFIG_REGRAS.LIMITE_JORNADA_LONGA_H;
+  }).length;
+  var fracaoJornada = dias.length ? Math.min(1, diasLongos / Math.max(3, dias.length / 3)) : 0;
+
+  // 5) Repetição de atividades críticas em curto período
+  var fracaoCriticas = Math.min(1, registro.atividadesCriticas / 5);
+
+  var P = CONFIG_REGRAS.PESOS;
+  var pontuacao =
+      fracaoHE            * P.horasExtras +
+      fracaoInterjornada  * P.interjornadaCurta +
+      fracaoTurnos        * P.turnosConsecutivos +
+      fracaoJornada       * P.jornadaProlongada +
+      fracaoCriticas      * P.atividadesCriticas;
+
+  return {
+    pontuacao: Math.round(pontuacao),
+    horasExtras: Math.round(registro.horasExtras * 10) / 10,
+    menorInterjornada: menorInterjornada === null ? null : Math.round(menorInterjornada * 10) / 10,
+    turnosConsecutivos: maiorSequencia,
+    diasJornadaProlongada: diasLongos,
+    atividadesCriticas: registro.atividadesCriticas,
+    diasAnalisados: dias.length
+  };
+}
+
+/** Traduz a pontuação em nível de fadiga (Dossiê 3.5). */
+function classificarNivelFadiga_(pontuacao) {
+  if (pontuacao >= CONFIG_REGRAS.FAIXA_CRITICO)  return 'CRITICO';
+  if (pontuacao >= CONFIG_REGRAS.FAIXA_ALTO)     return 'ALTO';
+  if (pontuacao >= CONFIG_REGRAS.FAIXA_MODERADO) return 'MODERADO';
+  return 'BAIXO';
+}
+
+/** Recomendação operacional apresentada ao gestor junto do alerta. */
+function recomendacaoPorNivel_(nivel) {
+  if (nivel === 'CRITICO') {
+    return 'Prioritário: afastar de atividades críticas (NR-10/12/33/35) no próximo turno, ' +
+           'revisar escala e encaminhar a acompanhamento interno.';
+  }
+  return 'Preventivo: redistribuir carga operacional, revisar horas extras da semana e ' +
+         'evitar novas atividades críticas em sequência.';
+}
+
+/** Verifica se já existe alerta aberto recente para o mesmo funcionário e nível. */
+function existeAlertaRecente_(idFuncionario, nivel) {
+  var alertas;
+  try {
+    alertas = lerAba_(CONFIG_REGRAS.ABA_ALERTAS);
+  } catch (e) {
+    return false;
+  }
+
+  var limite = new Date();
+  limite.setHours(limite.getHours() - CONFIG_REGRAS.JANELA_ANTI_DUPLICIDADE_H);
+
+  for (var i = alertas.linhas.length - 1; i >= 0; i--) {
+    var linha = alertas.linhas[i];
+    var id = String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.idFuncionario) || '').trim();
+    if (id !== String(idFuncionario)) continue;
+
+    var nivelLinha = normalizar_(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.nivel));
+    if (nivelLinha !== nivel) continue;
+
+    var data = paraData_(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.timestamp));
+    if (data && data >= limite) return true;
+  }
+  return false;
+}
+
+/** Grava o alerta na aba Alertas_Fadiga (append-only, como todo evento crítico). */
+function publicarAlertaFadiga_(dados) {
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  var idAlerta;
+
+  try {
+    var alertas = lerAba_(CONFIG_REGRAS.ABA_ALERTAS);
+    idAlerta = gerarId_('ALT', alertas.linhas.length);
+
+    var totalColunas = Math.max(alertas.cabecalhos.length, 12);
+    var linha = new Array(totalColunas).fill('');
+
+    function set(sinonimos, valor) {
+      var pos = acharColuna_(alertas.indice, sinonimos);
+      if (pos !== -1) linha[pos] = valor;
+    }
+
+    set(COLUNAS_REGRAS.ALERTAS.id,            idAlerta);
+    set(COLUNAS_REGRAS.ALERTAS.timestamp,     agora_());
+    set(COLUNAS_REGRAS.ALERTAS.idFuncionario, dados.idFuncionario);
+    set(COLUNAS_REGRAS.ALERTAS.nome,          dados.nome);
+    set(COLUNAS_REGRAS.ALERTAS.setor,         dados.setor);
+    set(COLUNAS_REGRAS.ALERTAS.idGestor,      dados.idGestor);
+    set(COLUNAS_REGRAS.ALERTAS.nivel,         dados.nivel);
+    set(COLUNAS_REGRAS.ALERTAS.pontuacao,     dados.pontuacao);
+    set(COLUNAS_REGRAS.ALERTAS.indicadores,   dados.indicadores);
+    set(COLUNAS_REGRAS.ALERTAS.recomendacao,  dados.recomendacao);
+    set(COLUNAS_REGRAS.ALERTAS.status,        'ABERTO');
+
+    alertas.aba.appendRow(linha);
+    SpreadsheetApp.flush();
+
+  } finally {
+    trava.releaseLock();   // solta a trava ANTES de chamar registrarLog (evita travamento duplo)
+  }
+
+  return idAlerta;
+}
+
+/**
+ * ROTINA PRINCIPAL DO MOTOR DE FADIGA.
+ * Analisa toda a base, gera alertas para os níveis ALTO e CRÍTICO e devolve um resumo.
+ * Pode rodar manualmente ou por gatilho diário.
+ *
+ * @return {Object} { analisados, alertasGerados, ignoradosSemGestor, duplicadosIgnorados, detalhe }
+ */
+function executarMotorFadiga() {
+  var consolidado = consolidarJornadas_();
+  var funcionarios = lerAba_(CONFIG.ABA_FUNCIONARIOS);
+
+  var resumo = { analisados: 0, alertasGerados: 0, ignoradosSemGestor: 0, duplicadosIgnorados: 0, detalhe: [] };
+
+  for (var i = 0; i < funcionarios.linhas.length; i++) {
+    var linha = funcionarios.linhas[i];
+
+    var idFunc = String(valorDe_(linha, funcionarios.indice, COLUNAS.FUNCIONARIOS.id) || '').trim();
+    var status = normalizar_(valorDe_(linha, funcionarios.indice, COLUNAS.FUNCIONARIOS.status));
+    if (!idFunc || status !== normalizar_(CONFIG.STATUS_ATIVO)) continue;   // inativo não gera alerta
+
+    var registro = consolidado[idFunc];
+    if (!registro || Object.keys(registro.dias).length === 0) continue;      // sem jornada na janela
+
+    resumo.analisados += 1;
+
+    var indicadores = calcularIndicadoresFadiga_(registro);
+    var nivel = classificarNivelFadiga_(indicadores.pontuacao);
+
+    // Só ALTO e CRÍTICO viram alerta. BAIXO/MODERADO ficam em monitoramento passivo.
+    if (nivel !== 'ALTO' && nivel !== 'CRITICO') continue;
+
+    var nome  = String(valorDe_(linha, funcionarios.indice, COLUNAS.FUNCIONARIOS.nome) || '');
+    var setor = String(valorDe_(linha, funcionarios.indice, COLUNAS.FUNCIONARIOS.setor) || '');
+    var idGestorDireto = valorDe_(linha, funcionarios.indice, ['id_gestor', 'gestor_responsavel']);
+    var idGestor = localizarGestorDoSetor_(setor, idGestorDireto);
+
+    // Sem gestor identificado, não publicamos: alerta de saúde não pode cair em painel errado.
+    if (!idGestor) {
+      resumo.ignoradosSemGestor += 1;
+      registrarLog({
+        usuario: idFunc, perfil: 'SISTEMA', acao: 'ALERTA_FADIGA_NAO_ENTREGUE',
+        entidade: CONFIG_REGRAS.ABA_ALERTAS, idRegistro: idFunc,
+        detalhes: 'Nível ' + nivel + ' detectado, mas o setor "' + setor + '" não possui id_gestor definido.',
+        resultado: 'ERRO'
+      });
+      continue;
+    }
+
+    if (existeAlertaRecente_(idFunc, nivel)) {
+      resumo.duplicadosIgnorados += 1;
+      continue;
+    }
+
+    var textoIndicadores =
+        'HE acumuladas: ' + indicadores.horasExtras + 'h | ' +
+        'Menor interjornada: ' + (indicadores.menorInterjornada === null ? 'N/D' : indicadores.menorInterjornada + 'h') + ' | ' +
+        'Turnos consecutivos: ' + indicadores.turnosConsecutivos + ' | ' +
+        'Dias com jornada > ' + CONFIG_REGRAS.LIMITE_JORNADA_LONGA_H + 'h: ' + indicadores.diasJornadaProlongada + ' | ' +
+        'Atividades críticas: ' + indicadores.atividadesCriticas;
+
+    var idAlerta = publicarAlertaFadiga_({
+      idFuncionario: idFunc, nome: nome, setor: setor, idGestor: idGestor,
+      nivel: nivel, pontuacao: indicadores.pontuacao,
+      indicadores: textoIndicadores,
+      recomendacao: recomendacaoPorNivel_(nivel)
+    });
+
+    // Auditoria: o alerta é um evento crítico e entra na corrente de hashes do Code.gs.
+    // Observe que o log registra o DESTINO do alerta — prova de que ele foi só para o gestor.
+    registrarLog({
+      usuario: idFunc, perfil: 'SISTEMA', acao: 'GERACAO_ALERTA_FADIGA',
+      entidade: CONFIG_REGRAS.ABA_ALERTAS, idRegistro: idAlerta,
+      detalhes: 'Nível ' + nivel + ' (score ' + indicadores.pontuacao + '). ' +
+                'Destino exclusivo: gestor ' + idGestor + ' | ' + textoIndicadores,
+      resultado: 'SUCESSO'
+    });
+
+    resumo.alertasGerados += 1;
+    resumo.detalhe.push({ idFuncionario: idFunc, nivel: nivel, pontuacao: indicadores.pontuacao, idGestor: idGestor });
+  }
+
+  Logger.log(JSON.stringify(resumo, null, 2));
+  return resumo;
+}
+
+/**
+ * CONSULTA USADA PELO DASHBOARD DO GESTOR.
+ * Devolve APENAS os alertas endereçados àquela matrícula de gestor.
+ * O Totem e o relógio de ponto não têm endpoint para isso — de propósito (Dossiê 3.3.1).
+ *
+ * @param {string} idGestor Matrícula do gestor autenticado.
+ * @param {string} perfil   Deve ser GESTOR, SST ou ADMIN.
+ */
+function consultarAlertasDoGestor(idGestor, perfil) {
+  var perfilNorm = normalizar_(perfil);
+  if (['GESTOR', 'SST', 'ADMIN'].indexOf(perfilNorm) === -1) {
+    return { erro: 'ACESSO_NEGADO', mensagem: 'Alertas preditivos são restritos a Gestor, SST e Admin.' };
+  }
+  if (!idGestor) return { erro: 'DADOS_INCOMPLETOS', mensagem: 'Informe a matrícula do gestor.' };
+
+  var alertas = lerAba_(CONFIG_REGRAS.ABA_ALERTAS);
+  var lista = [];
+
+  for (var i = 0; i < alertas.linhas.length; i++) {
+    var linha = alertas.linhas[i];
+    var destino = String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.idGestor) || '').trim();
+
+    // SST e ADMIN enxergam tudo; GESTOR enxerga só o que é dele.
+    if (perfilNorm === 'GESTOR' && destino !== String(idGestor)) continue;
+    if (normalizar_(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.status)) !== 'ABERTO') continue;
+
+    lista.push({
+      idAlerta:      String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.id)),
+      timestamp:     String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.timestamp)),
+      idFuncionario: String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.idFuncionario)),
+      nome:          String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.nome)),
+      setor:         String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.setor)),
+      nivel:         String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.nivel)),
+      pontuacao:     Number(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.pontuacao)) || 0,
+      indicadores:   String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.indicadores)),
+      recomendacao:  String(valorDe_(linha, alertas.indice, COLUNAS_REGRAS.ALERTAS.recomendacao))
+    });
+  }
+
+  // Consulta a dado sensível também é evento auditável (Dossiê 6.5.2).
+  registrarLog({
+    usuario: idGestor, perfil: perfilNorm, acao: 'CONSULTA_ALERTA_FADIGA',
+    entidade: CONFIG_REGRAS.ABA_ALERTAS, idRegistro: '',
+    detalhes: 'Consulta de alertas preditivos. Retornados: ' + lista.length,
+    resultado: 'PERMITIDO'
+  });
+
+  return { totalAlertas: lista.length, alertas: lista };
+}
+
+
+/* ================================================================================================
+ * BLOCO 4 — MOTOR 2: GAMIFICAÇÃO ASSIMÉTRICA COOPERATIVA
+ * ------------------------------------------------------------------------------------------------
+ * A LÓGICA EM UMA FRASE: o mentor ganha um percentual do QUANTO O MENTORADO MELHOROU.
+ * Se o mentorado piorar, a melhora é zero — e zero vezes qualquer percentual é zero.
+ * O saldo do mentor, portanto, só pode ficar parado ou subir. Nunca cair.
+ * ============================================================================================== */
+
+/**
+ * Calcula o score de conservação do mentorado (0 a 100) a partir de Movimentacoes_Trocas.
+ *
+ * IMPORTANTE: este score descreve o MENTORADO. Ele alimenta a evolução, e a evolução só é usada
+ * quando é POSITIVA. Um score ruim aqui nunca vira desconto no saldo do mentor.
+ */
+function calcularScoreConservacao_(idMentorado) {
+  var movimentacoes;
+  try {
+    movimentacoes = lerAba_(CONFIG.ABA_MOVIMENTACOES);
+  } catch (e) {
+    return 0;
+  }
+
+  var alvo = normalizar_(idMentorado);
+  var positivas = 0, negativas = 0, total = 0;
+
+  for (var i = 0; i < movimentacoes.linhas.length; i++) {
+    var linha = movimentacoes.linhas[i];
+    var idFunc = normalizar_(valorDe_(linha, movimentacoes.indice, COLUNAS.MOVIMENTACOES.idFuncionario));
+    if (idFunc !== alvo) continue;
+
+    var motivo = normalizar_(valorDe_(linha, movimentacoes.indice, COLUNAS.MOVIMENTACOES.motivo));
+    total += 1;
+
+    if (motivo.indexOf('DESGASTE_NATURAL') !== -1 ||
+        motivo.indexOf('FIM_VIDA_UTIL')    !== -1 ||
+        motivo.indexOf('HIGIENIZACAO')     !== -1) {
+      positivas += 1;                       // troca justificada = zelo
+    } else if (motivo.indexOf('EXTRAVIO') !== -1 ||
+               motivo.indexOf('MAU_USO')  !== -1 ||
+               motivo.indexOf('DANO_EVITAVEL') !== -1) {
+      negativas += 1;                       // desperdício evitável
+    }
+  }
+
+  if (total === 0) return 0;
+  var score = ((positivas - negativas) / total) * 100;
+  return Math.max(0, Math.min(100, Math.round(score)));   // score do mentorado também tem piso zero
+}
+
+/**
+ * ROTINA PRINCIPAL DA GAMIFICAÇÃO.
+ * Percorre a aba Gamificacao_Mentoria, recalcula o score do mentorado e credita o bônus do mentor.
+ *
+ * TRÊS CAMADAS DE BLINDAGEM DO MENTOR (regra inegociável do Dossiê 5.5):
+ *   Camada 1 — a evolução negativa é convertida em ZERO antes de virar bônus.
+ *   Camada 2 — o bônus calculado passa por nuncaNegativo_() antes de ser somado.
+ *   Camada 3 — o saldo final é comparado com o saldo anterior: se por qualquer motivo ficar menor,
+ *              o saldo anterior é preservado. O saldo do mentor é monotônico crescente.
+ *   Camada extra — infrações e extravios do mentorado só são ESCRITOS em colunas informativas.
+ *                  Nenhuma linha deste cálculo lê essas colunas.
+ *
+ * @return {Object} resumo do processamento
+ */
+function executarMotorGamificacao() {
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+
+  var resumo = { relacoesProcessadas: 0, bonusCreditado: 0, semEvolucao: 0, detalhe: [] };
+  var eventosParaLog = [];
+
+  try {
+    var gami = lerAba_(CONFIG_REGRAS.ABA_GAMIFICACAO);
+
+    var colScoreAtual  = acharColuna_(gami.indice, COLUNAS_REGRAS.GAMIFICACAO.scoreAtual);
+    var colEvolucao    = acharColuna_(gami.indice, COLUNAS_REGRAS.GAMIFICACAO.evolucao);
+    var colSaldoMentor = acharColuna_(gami.indice, COLUNAS_REGRAS.GAMIFICACAO.saldoMentor);
+    var colUltimoCalc  = acharColuna_(gami.indice, COLUNAS_REGRAS.GAMIFICACAO.ultimoCalculo);
+
+    if (colSaldoMentor === -1) {
+      throw new Error('Coluna de saldo do mentor não encontrada em ' + CONFIG_REGRAS.ABA_GAMIFICACAO +
+                      '. Esperado: saldo_bonus_mentor.');
+    }
+
+    for (var i = 0; i < gami.linhas.length; i++) {
+      var linha = gami.linhas[i];
+      var numeroLinha = i + 2;   // +1 do cabeçalho, +1 porque a planilha começa em 1
+
+      var idRelacao   = String(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.idRelacao) || '');
+      var idMentor    = String(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.idMentor) || '').trim();
+      var idMentorado = String(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.idMentorado) || '').trim();
+      var statusRel   = normalizar_(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.status));
+
+      if (!idMentor || !idMentorado) continue;
+      if (statusRel && statusRel !== 'ATIVA' && statusRel !== 'ATIVO') continue;
+
+      resumo.relacoesProcessadas += 1;
+
+      // --- Referência e situação atual do mentorado --------------------------------------------
+      var scoreInicial = Number(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.scoreInicial)) || 0;
+      var scoreAnterior = Number(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.scoreAtual));
+      if (isNaN(scoreAnterior)) scoreAnterior = scoreInicial;
+
+      var scoreAtual = calcularScoreConservacao_(idMentorado);
+
+      // --- CAMADA 1: evolução negativa vira zero -----------------------------------------------
+      var evolucaoBruta = scoreAtual - scoreAnterior;
+      var evolucaoValida = nuncaNegativo_(evolucaoBruta);
+
+      // --- CAMADA 2: bônus nunca é negativo ----------------------------------------------------
+      var percentual = Number(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.percentualBonus));
+      if (isNaN(percentual) || percentual <= 0) percentual = CONFIG_REGRAS.PERCENTUAL_BONUS_MENTOR_PADRAO;
+      if (percentual > 1) percentual = percentual / 100;   // aceita tanto 20 quanto 0,20
+
+      var bonus = nuncaNegativo_(evolucaoValida * percentual);
+      bonus = Math.round(bonus * 100) / 100;
+
+      // --- CAMADA 3: saldo final nunca abaixo do anterior nem do piso --------------------------
+      var saldoAnterior = nuncaNegativo_(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.saldoMentor));
+      var saldoCalculado = saldoAnterior + bonus;
+      var saldoFinal = Math.max(CONFIG_REGRAS.PISO_SALDO_MENTOR, saldoAnterior, saldoCalculado);
+      saldoFinal = Math.round(saldoFinal * 100) / 100;
+
+      // --- Gravação ----------------------------------------------------------------------------
+      if (colScoreAtual !== -1) gami.aba.getRange(numeroLinha, colScoreAtual + 1).setValue(scoreAtual);
+      if (colEvolucao   !== -1) gami.aba.getRange(numeroLinha, colEvolucao + 1).setValue(evolucaoValida);
+      gami.aba.getRange(numeroLinha, colSaldoMentor + 1).setValue(saldoFinal);
+      if (colUltimoCalc !== -1) gami.aba.getRange(numeroLinha, colUltimoCalc + 1).setValue(agora_());
+
+      if (bonus > 0) {
+        resumo.bonusCreditado += bonus;
+      } else {
+        resumo.semEvolucao += 1;
+      }
+
+      resumo.detalhe.push({
+        idRelacao: idRelacao, idMentor: idMentor, idMentorado: idMentorado,
+        scoreMentoradoAnterior: scoreAnterior, scoreMentoradoAtual: scoreAtual,
+        evolucaoBruta: evolucaoBruta, evolucaoConsiderada: evolucaoValida,
+        bonusCreditado: bonus, saldoAnterior: saldoAnterior, saldoFinal: saldoFinal
+      });
+
+      // O log fica para depois de soltar a trava, para o script não travar contra si mesmo.
+      eventosParaLog.push({
+        usuario: idMentor, perfil: 'SISTEMA', acao: 'CALCULO_BONUS_MENTOR',
+        entidade: CONFIG_REGRAS.ABA_GAMIFICACAO, idRegistro: idRelacao,
+        detalhes: 'Mentorado ' + idMentorado + ': score ' + scoreAnterior + ' -> ' + scoreAtual +
+                  ' (evolução bruta ' + evolucaoBruta + ', considerada ' + evolucaoValida + '). ' +
+                  'Bônus creditado: ' + bonus + '. Saldo ' + saldoAnterior + ' -> ' + saldoFinal +
+                  '. Assimetria positiva aplicada: saldo do mentor nunca reduzido.',
+        resultado: 'SUCESSO'
+      });
+    }
+
+    SpreadsheetApp.flush();
+
+  } finally {
+    trava.releaseLock();
+  }
+
+  // Auditoria depois da liberação da trava
+  for (var k = 0; k < eventosParaLog.length; k++) {
+    registrarLog(eventosParaLog[k]);
+  }
+
+  resumo.bonusCreditado = Math.round(resumo.bonusCreditado * 100) / 100;
+  Logger.log(JSON.stringify(resumo, null, 2));
+  return resumo;
+}
+
+/**
+ * Registra uma ocorrência do mentorado (extravio, infração, mau uso) em coluna INFORMATIVA.
+ *
+ * Existe para o SST enxergar o cenário — e existe justamente para deixar explícito no código
+ * que este caminho NÃO toca no saldo do mentor. Nenhuma linha aqui escreve em saldo_bonus_mentor.
+ *
+ * @param {string} idMentorado  Matrícula do mentorado
+ * @param {string} tipo         EXTRAVIO | INFRACAO
+ * @param {string} descricao    Texto livre
+ * @param {string} perfil       Deve ser SST ou ADMIN
+ */
+function registrarOcorrenciaMentorado(idMentorado, tipo, descricao, perfil) {
+  var perfilNorm = normalizar_(perfil);
+  if (['SST', 'ADMIN'].indexOf(perfilNorm) === -1) {
+    return { sucesso: false, mensagem: 'Registro de ocorrência é restrito a SST e Admin.' };
+  }
+
+  var gami = lerAba_(CONFIG_REGRAS.ABA_GAMIFICACAO);
+  var alvo = normalizar_(idMentorado);
+  var tipoNorm = normalizar_(tipo);
+
+  var coluna = tipoNorm === 'EXTRAVIO'
+    ? acharColuna_(gami.indice, COLUNAS_REGRAS.GAMIFICACAO.extraviosMentorado)
+    : acharColuna_(gami.indice, COLUNAS_REGRAS.GAMIFICACAO.infracoesMentorado);
+
+  if (coluna === -1) {
+    return { sucesso: false, mensagem: 'Coluna informativa não encontrada em ' + CONFIG_REGRAS.ABA_GAMIFICACAO + '.' };
+  }
+
+  var atualizados = 0;
+  for (var i = 0; i < gami.linhas.length; i++) {
+    var linha = gami.linhas[i];
+    if (normalizar_(valorDe_(linha, gami.indice, COLUNAS_REGRAS.GAMIFICACAO.idMentorado)) !== alvo) continue;
+
+    var contadorAtual = Number(linha[coluna]) || 0;
+    gami.aba.getRange(i + 2, coluna + 1).setValue(contadorAtual + 1);
+    atualizados += 1;
+  }
+  SpreadsheetApp.flush();
+
+  registrarLog({
+    usuario: idMentorado, perfil: perfilNorm, acao: 'OCORRENCIA_MENTORADO',
+    entidade: CONFIG_REGRAS.ABA_GAMIFICACAO, idRegistro: idMentorado,
+    detalhes: 'Tipo: ' + tipoNorm + '. ' + (descricao || '') +
+              ' | Registro informativo: NÃO impacta o saldo do mentor (assimetria positiva).',
+    resultado: 'SUCESSO'
+  });
+
+  return { sucesso: true, relacoesAtualizadas: atualizados,
+           mensagem: 'Ocorrência registrada. Saldo do mentor preservado, conforme regra de assimetria.' };
+}
+
+
+/* ================================================================================================
+ * BLOCO 5 — AUTOMAÇÃO (GATILHOS)
+ * ============================================================================================== */
+
+/**
+ * Instala os gatilhos automáticos. Rode UMA vez.
+ *   - Motor de fadiga: todo dia às 6h (antes do primeiro turno, alerta já no painel do gestor).
+ *   - Gamificação: toda segunda-feira às 7h.
+ * Executar de novo é seguro: os gatilhos antigos destes motores são removidos antes.
+ */
+function instalarGatilhosAutomaticos() {
+  var existentes = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existentes.length; i++) {
+    var nome = existentes[i].getHandlerFunction();
+    if (nome === 'executarMotorFadiga' || nome === 'executarMotorGamificacao') {
+      ScriptApp.deleteTrigger(existentes[i]);
+    }
+  }
+
+  ScriptApp.newTrigger('executarMotorFadiga').timeBased().everyDays(1).atHour(6).create();
+  ScriptApp.newTrigger('executarMotorGamificacao').timeBased()
+           .onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
+
+  Logger.log('Gatilhos instalados: fadiga (diário 6h) e gamificação (segundas 7h).');
+}
+
+
+/* ================================================================================================
+ * BLOCO 6 — TESTES
+ * ============================================================================================== */
+
+function teste_5_motorFadiga() {
+  Logger.log(JSON.stringify(executarMotorFadiga(), null, 2));
+}
+
+function teste_6_alertasDoGestor() {
+  Logger.log(JSON.stringify(consultarAlertasDoGestor('G001', 'GESTOR'), null, 2));
+}
+
+function teste_7_motorGamificacao() {
+  Logger.log(JSON.stringify(executarMotorGamificacao(), null, 2));
+}
+
+/**
+ * TESTE DA REGRA INEGOCIÁVEL — assimetria positiva.
+ * Simula cenários extremos SEM tocar na planilha e comprova que o saldo do mentor jamais recua.
+ * Use este teste na homologação e sempre que o SST auditar o programa de mentoria.
+ */
+function teste_8_assimetriaMentor() {
+  var cenarios = [
+    { nome: 'Mentorado evoluiu (+30)',             saldoAnterior: 100, scoreAntes: 40, scoreDepois: 70 },
+    { nome: 'Mentorado piorou muito (-60)',        saldoAnterior: 100, scoreAntes: 80, scoreDepois: 20 },
+    { nome: 'Mentorado zerou o score',             saldoAnterior: 100, scoreAntes: 90, scoreDepois:  0 },
+    { nome: 'Mentor sem saldo e mentorado piorou', saldoAnterior:   0, scoreAntes: 50, scoreDepois: 10 }
+  ];
+
+  var percentual = CONFIG_REGRAS.PERCENTUAL_BONUS_MENTOR_PADRAO;
+  var aprovado = true;
+
+  cenarios.forEach(function (c) {
+    var evolucaoBruta = c.scoreDepois - c.scoreAntes;
+    var evolucaoValida = nuncaNegativo_(evolucaoBruta);          // camada 1
+    var bonus = nuncaNegativo_(evolucaoValida * percentual);     // camada 2
+    var saldoFinal = Math.max(CONFIG_REGRAS.PISO_SALDO_MENTOR,   // camada 3
+                              c.saldoAnterior, c.saldoAnterior + bonus);
+
+    var passou = saldoFinal >= c.saldoAnterior && saldoFinal >= 0;
+    if (!passou) aprovado = false;
+
+    Logger.log(c.nome + ' -> evolução bruta: ' + evolucaoBruta +
+               ' | bônus: ' + bonus +
+               ' | saldo: ' + c.saldoAnterior + ' -> ' + saldoFinal +
+               ' | ' + (passou ? 'APROVADO' : 'FALHOU'));
+  });
+
+  Logger.log(aprovado
+    ? 'RESULTADO: regra de assimetria positiva ÍNTEGRA em todos os cenários.'
+    : 'RESULTADO: FALHA NA BLINDAGEM DO MENTOR — não implantar.');
+  return aprovado;
+}

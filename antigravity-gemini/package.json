@@ -1,0 +1,135 @@
+{
+  "name": "antigravity-gemini",
+  "displayName": "Google Gemini for Antigravity",
+  "description": "Integração do Google Gemini AI no Antigravity IDE",
+  "version": "1.0.0",
+  "publisher": "gemini-antigravity",
+  "engines": {
+    "antigravity": "^1.0.0",
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "gemini",
+    "google",
+    "ai",
+    "antigravity",
+    "assistant"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gemini.chat",
+        "title": "Gemini: Abrir Chat"
+      },
+      {
+        "command": "gemini.explainCode",
+        "title": "Gemini: Explicar Código Selecionado"
+      },
+      {
+        "command": "gemini.generateCode",
+        "title": "Gemini: Gerar Código"
+      },
+      {
+        "command": "gemini.refactorCode",
+        "title": "Gemini: Refatorar Código"
+      },
+      {
+        "command": "gemini.generateTests",
+        "title": "Gemini: Gerar Testes"
+      },
+      {
+        "command": "gemini.configureApiKey",
+        "title": "Gemini: Configurar API Key"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "gemini.explainCode",
+          "when": "editorHasSelection",
+          "group": "modification"
+        },
+        {
+          "command": "gemini.refactorCode",
+          "when": "editorHasSelection",
+          "group": "modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Gemini for Antigravity",
+      "properties": {
+        "gemini.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Chave API do Google Gemini",
+          "order": 1
+        },
+        "gemini.model": {
+          "type": "string",
+          "default": "gemini-1.5-pro",
+          "description": "Modelo Gemini a ser utilizado",
+          "order": 2
+        },
+        "gemini.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Temperatura para geração de texto",
+          "order": 3
+        },
+        "gemini.maxTokens": {
+          "type": "number",
+          "default": 2048,
+          "minimum": 1,
+          "maximum": 8192,
+          "description": "Número máximo de tokens na resposta",
+          "order": 4
+        },
+        "gemini.systemPrompt": {
+          "type": "string",
+          "default": "Você é um assistente de programação especializado em ajudar desenvolvedores.",
+          "description": "Prompt de sistema personalizado",
+          "order": 5
+        }
+      }
+    },
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "gemini.chatView",
+          "name": "Gemini Chat",
+          "contextualTitle": "Gemini Assistant"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gemini-antigravity/antigravity-gemini.git"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,487 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EHS SMART ENTERPRISE · Motor_Regras.gs
+ * Camada de inteligência: alerta preditivo de fadiga, dashboard do gestor,
+ * gamificação assimétrica e rotinas automáticas.
+ *
+ * ONDE COLAR: mesmo projeto Apps Script do Code.gs
+ * (Arquivo → + → Script → nomear "Motor_Regras")
+ * Usa CFG e as funções auxiliares do Code.gs — namespace compartilhado.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 1 · PARÂMETROS DO MOTOR PREDITIVO
+   Pesos ajustáveis pela SST sem mexer na lógica.
+═══════════════════════════════════════════════════════════════════════════ */
+
+const FADIGA = {
+  PESOS: {
+    HORAS_EXTRAS_ESTOURO: 3,      // acima do limite da função
+    HORAS_EXTRAS_PROXIMO: 1,      // acima de 70% do limite
+    TURNOS_SEQUENCIA_ALTA: 3,     // 8 ou mais turnos consecutivos
+    TURNOS_SEQUENCIA_MEDIA: 1,    // 5 a 7 turnos
+    INTERJORNADA_CURTA: 2,        // menos de 11h entre jornadas (CLT art. 66)
+    CRITICAS_MUITAS: 2,           // 8+ atividades críticas em 7 dias
+    CRITICAS_ALGUMAS: 1,          // 4 a 7 atividades críticas
+    OCORRENCIA_RECENTE: 2,        // erro operacional / quase acidente recente
+    EXPOSICAO_CRITICA: 1          // função de grau CRITICO
+  },
+  CORTES: { CRITICO: 8, ALTO: 5, MODERADO: 2 },
+  INTERJORNADA_MINIMA_HORAS: 11
+};
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 2 · CÁLCULO DA FADIGA
+   Soma ponderada de cinco indicadores. Devolve nível + justificativa legível.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function calcularFadiga(matricula) {
+  const cj = CFG.COL_JORNADA;
+  const jornadas = _lerTudo(CFG.ABAS.JORNADA);
+  const alvo = String(matricula).trim().toUpperCase();
+
+  // Pega o registro de jornada mais recente do colaborador
+  let j = null;
+  jornadas.forEach(function (linha) {
+    if (String(linha[cj.matricula - 1]).trim().toUpperCase() !== alvo) return;
+    if (!j || new Date(linha[cj.data_referencia - 1]) > new Date(j[cj.data_referencia - 1])) {
+      j = linha;
+    }
+  });
+  if (!j) return null;
+
+  const u = _obterUsuario(matricula);
+  if (!u) return null;
+
+  const funcRow = _buscarLinha(CFG.ABAS.FUNCOES, CFG.COL_FUNCOES.id_funcao, u.funcao);
+  const cf = CFG.COL_FUNCOES;
+  const limiteHE = funcRow ? (Number(funcRow.dados[cf.limite_horas_extras_mes - 1]) || 40) : 40;
+  const grauRisco = funcRow ? String(funcRow.dados[cf.grau_exposicao_risco - 1]).toUpperCase() : 'BAIXO';
+  const nomeFuncao = funcRow ? funcRow.dados[cf.nome_funcao - 1] : '—';
+
+  const he = Number(j[cj.horas_extras_mes - 1]) || 0;
+  const turnos = Number(j[cj.turnos_consecutivos - 1]) || 0;
+  const interjornada = Number(j[cj.intervalo_min_horas - 1]) || 12;
+  const criticas = Number(j[cj.atividades_criticas_7d - 1]) || 0;
+  const ocorrencias = Number(j[cj.ocorrencias_recentes - 1]) || 0;
+
+  let score = 0;
+  const fatores = [];
+  const P = FADIGA.PESOS;
+
+  // 1 · Horas extras
+  if (he > limiteHE) {
+    score += P.HORAS_EXTRAS_ESTOURO;
+    fatores.push(he + 'h extras no mês (limite da função: ' + limiteHE + 'h)');
+  } else if (he > limiteHE * 0.7) {
+    score += P.HORAS_EXTRAS_PROXIMO;
+    fatores.push(he + 'h extras acumuladas, próximo do limite');
+  }
+
+  // 2 · Turnos consecutivos
+  if (turnos >= 8) {
+    score += P.TURNOS_SEQUENCIA_ALTA;
+    fatores.push(turnos + ' turnos consecutivos sem folga');
+  } else if (turnos >= 5) {
+    score += P.TURNOS_SEQUENCIA_MEDIA;
+    fatores.push(turnos + ' turnos consecutivos');
+  }
+
+  // 3 · Interjornada
+  if (interjornada < FADIGA.INTERJORNADA_MINIMA_HORAS) {
+    score += P.INTERJORNADA_CURTA;
+    fatores.push('Interjornada de ' + interjornada + 'h (mínimo legal: 11h)');
+  }
+
+  // 4 · Atividades críticas
+  if (criticas >= 8) {
+    score += P.CRITICAS_MUITAS;
+    fatores.push(criticas + ' atividades críticas em 7 dias');
+  } else if (criticas >= 4) {
+    score += P.CRITICAS_ALGUMAS;
+    fatores.push(criticas + ' atividades críticas em 7 dias');
+  }
+
+  // 5 · Histórico recente e exposição da função
+  if (ocorrencias > 0) {
+    score += P.OCORRENCIA_RECENTE;
+    fatores.push(ocorrencias + ' ocorrência(s) operacional(is) recente(s)');
+  }
+  if (grauRisco === 'CRITICO') {
+    score += P.EXPOSICAO_CRITICA;
+    fatores.push('Função de exposição crítica');
+  }
+
+  let nivel = 'BAIXO';
+  if (score >= FADIGA.CORTES.CRITICO)       nivel = 'CRITICO';
+  else if (score >= FADIGA.CORTES.ALTO)     nivel = 'ALTO';
+  else if (score >= FADIGA.CORTES.MODERADO) nivel = 'MODERADO';
+
+  const acoes = {
+    CRITICO: 'Restringir atividades críticas e acionar a SST hoje.',
+    ALTO: 'Redistribuir carga operacional e reavaliar em 48h.',
+    MODERADO: 'Acompanhar. Evitar novo turno estendido nesta semana.',
+    BAIXO: 'Monitoramento passivo.'
+  };
+
+  return {
+    matricula: u.matricula, nome: u.nome_completo, funcao: nomeFuncao,
+    setor: u.setor, id_gestor: u.id_gestor,
+    nivel: nivel, score: score, fatores: fatores,
+    acao_recomendada: acoes[nivel]
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 3 · DISPARO DO ALERTA
+   Regra do Dossiê 3.3.1: o alerta vai SÓ para o gestor do setor.
+   Nem o próprio colaborador recebe. O relógio de ponto nunca é notificado.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function rotina_VarrerFadiga() {
+  const cf = CFG.COL_FUNCIONARIOS;
+  const funcionarios = _lerTudo(CFG.ABAS.FUNCIONARIOS);
+  const disparados = [];
+
+  funcionarios.forEach(function (linha) {
+    const matricula = linha[cf.matricula - 1];
+    if (!matricula) return;
+
+    // Terceirizado segue via rápida de compliance — não entra no preditivo
+    if (String(linha[cf.tipo_vinculo - 1]).toUpperCase() !== 'NATIVO') return;
+    const statusEfetivo = linha[cf.status_efetivo - 1] || linha[cf.status - 1];
+    if (String(statusEfetivo).toUpperCase() !== 'ATIVO') return;
+
+    const f = calcularFadiga(matricula);
+    if (!f) return;
+    if (f.nivel !== 'ALTO' && f.nivel !== 'CRITICO') return;
+
+    const destinatario = _resolverGestorDoSetor(linha[cf.setor - 1], linha[cf.id_gestor - 1]);
+
+    registrarLog({
+      matricula_usuario: 'SISTEMA', perfil_rbac_no_momento: 'SISTEMA',
+      acao_realizada: 'ALERTA_FADIGA_GERADO',
+      tabela_afetada: CFG.ABAS.JORNADA, id_registro_afetado: matricula,
+      origem_acao: 'ROTINA_AUTOMATICA', id_dispositivo: 'SERVIDOR',
+      resultado: 'SUCESSO',
+      criticidade: f.nivel === 'CRITICO' ? 'CRITICO' : 'AVISO',
+      justificativa: 'Nível ' + f.nivel + ' (score ' + f.score + '). Destinatário: ' +
+                     destinatario + '. Fatores: ' + f.fatores.join(' | ')
+    });
+
+    disparados.push({ alerta: f, destinatario: destinatario });
+  });
+
+  return disparados;
+}
+
+/** Titular do setor; se ausente ou inativo, cai para o substituto. */
+function _resolverGestorDoSetor(idSetor, idGestorFallback) {
+  const setorRow = _buscarLinha(CFG.ABAS.SETORES, CFG.COL_SETORES.id_setor, idSetor);
+  if (!setorRow) return idGestorFallback || 'NAO_DEFINIDO';
+
+  const cs = CFG.COL_SETORES;
+  const titular = setorRow.dados[cs.id_gestor_responsavel - 1];
+  const substituto = setorRow.dados[cs.id_gestor_substituto - 1];
+
+  if (titular) {
+    const u = _obterUsuario(titular);
+    if (u && String(u.status_efetivo).toUpperCase() === 'ATIVO') return titular;
+  }
+  if (substituto) return substituto;
+  return idGestorFallback || 'NAO_DEFINIDO';
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 4 · DASHBOARD DO GESTOR
+   Dupla trava: perfil autorizado E escopo limitado aos próprios setores.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function api_DashboardGestor(matriculaSolicitante) {
+  const u = _exigirPerfil(matriculaSolicitante, CFG.PERFIS_SENSIVEIS, 'DASHBOARD_GESTOR');
+
+  const cs = CFG.COL_SETORES;
+  const todosSetores = _lerTudo(CFG.ABAS.SETORES);
+  const veTudo = (u.perfil_rbac === 'SST' || u.perfil_rbac === 'ADMIN');
+
+  const setoresNoEscopo = todosSetores.filter(function (s) {
+    if (String(s[cs.status - 1]).toUpperCase() !== 'ATIVO') return false;
+    if (veTudo) return true;
+    return String(s[cs.id_gestor_responsavel - 1]) === String(u.matricula) ||
+           String(s[cs.id_gestor_substituto - 1]) === String(u.matricula);
+  }).map(function (s) {
+    return { id_setor: s[cs.id_setor - 1], nome_setor: s[cs.nome_setor - 1] };
+  });
+
+  const idsEscopo = setoresNoEscopo.map(function (s) { return String(s.id_setor); });
+
+  const cf = CFG.COL_FUNCIONARIOS;
+  const equipe = _lerTudo(CFG.ABAS.FUNCIONARIOS).filter(function (f) {
+    return f[cf.matricula - 1] &&
+           idsEscopo.indexOf(String(f[cf.setor - 1])) !== -1 &&
+           String(f[cf.status - 1]).toUpperCase() !== 'DESLIGADO';
+  });
+
+  // — Fadiga
+  const alertas = equipe.map(function (f) { return calcularFadiga(f[cf.matricula - 1]); })
+    .filter(function (x) { return x !== null; })
+    .sort(function (a, b) { return b.score - a.score; });
+
+  // — Pendências normativas
+  const pendencias = [];
+  equipe.forEach(function (f) {
+    const v = validarColaborador(f[cf.matricula - 1]);
+    if (v.motivos.length || v.alertas.length) {
+      pendencias.push({
+        matricula: v.pessoa.matricula, nome: v.pessoa.nome_completo,
+        bloqueios: v.motivos, avisos: v.alertas
+      });
+    }
+  });
+
+  // — Mentorias do escopo
+  const mentorias = _listarMentorias(idsEscopo);
+
+  registrarLog({
+    matricula_usuario: u.matricula, perfil_rbac_no_momento: u.perfil_rbac,
+    acao_realizada: 'CONSULTA_SENSIVEL', tabela_afetada: 'DASHBOARD_GESTOR',
+    id_registro_afetado: idsEscopo.join(';'), origem_acao: 'WEB_DESKTOP',
+    resultado: 'SUCESSO', criticidade: 'INFO'
+  });
+
+  return {
+    gestor: { matricula: u.matricula, nome: u.nome_completo, perfil: u.perfil_rbac },
+    setores: setoresNoEscopo,
+    total_equipe: equipe.length,
+    kpis: {
+      fadiga_critica: alertas.filter(function (a) { return a.nivel === 'CRITICO'; }).length,
+      fadiga_alta: alertas.filter(function (a) { return a.nivel === 'ALTO'; }).length,
+      bloqueados: pendencias.filter(function (p) { return p.bloqueios.length > 0; }).length
+    },
+    alertas_fadiga: alertas,
+    pendencias_epi_nr: pendencias,
+    mentorias: mentorias
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 5 · GAMIFICAÇÃO ASSIMÉTRICA
+   O bônus do mentor tem TRÊS proteções redundantes de piso zero.
+   Redundância aqui é intencional: se uma falhar, as outras seguram.
+═══════════════════════════════════════════════════════════════════════════ */
+
+const GAMIFICACAO = {
+  PONTOS_POR_TROCA_POSITIVA: 50,
+  REPASSE_MINIMO: 0.05,
+  REPASSE_MAXIMO: 0.25
+};
+
+function calcularBonusMentor(vinculo) {
+  const pontos = Number(vinculo.pontos_acumulados_mentorado) || 0;
+  const base = Number(vinculo.pontos_base_inicial) || 0;
+  let repasse = Number(vinculo.percentual_repasse_mentor) || 0;
+
+  // Repasse fora da faixa homologada pela SST é normalizado, não extrapolado
+  repasse = Math.min(GAMIFICACAO.REPASSE_MAXIMO,
+            Math.max(GAMIFICACAO.REPASSE_MINIMO, repasse));
+
+  const evolucaoBruta = pontos - base;
+
+  // ── PROTEÇÃO 1 · piso zero na evolução
+  const evolucaoLiquida = Math.max(0, evolucaoBruta);
+
+  // ── PROTEÇÃO 2 · piso zero no produto
+  let saldo = Math.max(0, evolucaoLiquida * repasse);
+
+  // ── PROTEÇÃO 3 · trava final antes de devolver
+  if (!isFinite(saldo) || saldo < 0) saldo = 0;
+
+  return {
+    evolucao_bruta: evolucaoBruta,
+    evolucao_liquida: evolucaoLiquida,
+    percentual_aplicado: repasse,
+    saldo_bonus_mentor: Math.round(saldo * 100) / 100,
+    // Constante por desenho. Infrações do mentorado NUNCA entram no cálculo.
+    impacto_infracoes_no_mentor: 0
+  };
+}
+
+function _listarMentorias(idsSetores) {
+  const cg = CFG.COL_GAMIFICACAO || _colunasGamificacao();
+  const dados = _lerTudo(CFG.ABAS.GAMIFICACAO);
+
+  return dados.filter(function (v) {
+    return v[cg.id_vinculo - 1] &&
+           String(v[cg.status_vinculo - 1]).toUpperCase() === 'ATIVO' &&
+           (!idsSetores || idsSetores.indexOf(String(v[cg.id_setor - 1])) !== -1);
+  }).map(function (v) {
+    const mentor = _obterUsuario(v[cg.matricula_mentor - 1]);
+    const mentorado = _obterUsuario(v[cg.matricula_mentorado - 1]);
+    const calc = calcularBonusMentor({
+      pontos_acumulados_mentorado: v[cg.pontos_acumulados_mentorado - 1],
+      pontos_base_inicial: v[cg.pontos_base_inicial - 1],
+      percentual_repasse_mentor: v[cg.percentual_repasse_mentor - 1]
+    });
+
+    return {
+      id_vinculo: v[cg.id_vinculo - 1],
+      mentor: mentor ? mentor.nome_completo : v[cg.matricula_mentor - 1],
+      mentorado: mentorado ? mentorado.nome_completo : v[cg.matricula_mentorado - 1],
+      evolucao_bruta: calc.evolucao_bruta,
+      evolucao_liquida: calc.evolucao_liquida,
+      saldo_bonus_mentor: calc.saldo_bonus_mentor,
+      // Informativo. Serve à SST direcionar orientação — não penaliza ninguém.
+      infracoes_mentorado: Number(v[cg.infracoes_mentorado - 1]) || 0,
+      impacto_infracoes_no_mentor: 0,
+      nivel_evolucao: v[cg.nivel_evolucao - 1],
+      validado_por_sst: v[cg.validado_por_sst - 1]
+    };
+  });
+}
+
+/** Mapa de colunas da aba de gamificação. */
+function _colunasGamificacao() {
+  return {
+    id_vinculo: 1, matricula_mentor: 2, matricula_mentorado: 3, id_setor: 4,
+    data_inicio_vinculo: 5, data_fim_vinculo: 6, status_vinculo: 7,
+    pontos_acumulados_mentorado: 8, pontos_base_inicial: 9,
+    evolucao_liquida_mentorado: 10, percentual_repasse_mentor: 11,
+    saldo_bonus_mentor: 12, saldo_bonus_acumulado_historico: 13,
+    infracoes_mentorado: 14, impacto_infracoes_no_mentor: 15,
+    perc_vida_util_media_mentorado: 16, qtd_trocas_positivas: 17,
+    nivel_evolucao: 18, validado_por_sst: 19, data_validacao_sst: 20,
+    observacoes_sst: 21
+  };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 6 · ROTINAS AUTOMÁTICAS
+═══════════════════════════════════════════════════════════════════════════ */
+
+/** Entregas não confirmadas em 24h viram EXPIRADO — pendência do almoxarifado. */
+function rotina_ExpirarConfirmacoes() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const cm = CFG.COL_MOVIMENTACOES;
+    const sh = _aba(CFG.ABAS.MOVIMENTACOES);
+    const dados = _lerTudo(CFG.ABAS.MOVIMENTACOES);
+    const limite = Date.now() - CFG.HORAS_EXPIRACAO_CONFIRMACAO * 3600000;
+    let expirados = 0;
+
+    dados.forEach(function (linha, i) {
+      if (String(linha[cm.status_confirmacao_totem - 1]).toUpperCase() !== 'PENDENTE') return;
+      const dataHora = new Date(linha[cm.data_hora - 1]);
+      if (isNaN(dataHora.getTime()) || dataHora.getTime() > limite) return;
+
+      sh.getRange(i + 2, cm.status_confirmacao_totem).setValue('EXPIRADO');
+      _gravarLogSemTrava({
+        matricula_usuario: 'SISTEMA', perfil_rbac_no_momento: 'SISTEMA',
+        acao_realizada: 'ALTERACAO', tabela_afetada: CFG.ABAS.MOVIMENTACOES,
+        id_registro_afetado: linha[cm.id_movimentacao - 1],
+        origem_acao: 'ROTINA_AUTOMATICA', resultado: 'SUCESSO', criticidade: 'AVISO',
+        valor_anterior: JSON.stringify({ status: 'PENDENTE' }),
+        valor_novo: JSON.stringify({ status: 'EXPIRADO' }),
+        justificativa: 'Sem confirmação do colaborador em ' +
+                       CFG.HORAS_EXPIRACAO_CONFIRMACAO + 'h'
+      });
+      expirados++;
+    });
+
+    return { expirados: expirados };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Verificação diária da corrente de hash. */
+function rotina_AuditarIntegridade() {
+  const r = verificarIntegridadeLog();
+  if (!r.integro) {
+    Logger.log('⚠ INTEGRIDADE COMPROMETIDA: ' + r.problemas.join(' || '));
+  }
+  return r;
+}
+
+/** Agendamento. Rode UMA vez ao instalar. */
+function instalarGatilhos() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
+
+  ScriptApp.newTrigger('rotina_VarrerFadiga').timeBased().atHour(6).everyDays(1).create();
+  ScriptApp.newTrigger('rotina_ExpirarConfirmacoes').timeBased().everyHours(6).create();
+  ScriptApp.newTrigger('rotina_AuditarIntegridade').timeBased().atHour(23).everyDays(1).create();
+
+  return 'Gatilhos instalados: fadiga (06h), expiração (6/6h), integridade (23h).';
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCO 7 · TESTE DE IMPLANTAÇÃO
+   Rode ANTES de liberar para o chão de fábrica.
+   O teste 2 é o mais importante: é ele que prova a assimetria positiva.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function TESTE_ImplantacaoCompleta() {
+  const r = [];
+
+  // ── Teste 1 · corrente de hash
+  const integridade = verificarIntegridadeLog();
+  r.push((integridade.integro ? '✔' : '✘') + ' Integridade do log: ' +
+         integridade.total_registros + ' registros' +
+         (integridade.integro ? ' — corrente íntegra' : ' — ' + integridade.problemas.join('; ')));
+
+  // ── Teste 2 · ASSIMETRIA POSITIVA (regra inegociável do Dossiê)
+  const cenarios = [
+    { nome: 'Mentorado evoluiu bem',
+      v: { pontos_acumulados_mentorado: 820, pontos_base_inicial: 500, percentual_repasse_mentor: 0.15 } },
+    { nome: 'Mentorado REGREDIU',
+      v: { pontos_acumulados_mentorado: 290, pontos_base_inicial: 380, percentual_repasse_mentor: 0.10 } },
+    { nome: 'Mentorado zerou tudo',
+      v: { pontos_acumulados_mentorado: 0, pontos_base_inicial: 900, percentual_repasse_mentor: 0.20 } }
+  ];
+
+  let assimetriaOk = true;
+  cenarios.forEach(function (c) {
+    const calc = calcularBonusMentor(c.v);
+    const passou = calc.saldo_bonus_mentor >= 0 && calc.impacto_infracoes_no_mentor === 0;
+    if (!passou) assimetriaOk = false;
+    r.push((passou ? '✔' : '✘') + ' ' + c.nome +
+           ' → evolução bruta ' + calc.evolucao_bruta +
+           ', saldo do mentor ' + calc.saldo_bonus_mentor);
+  });
+  r.push((assimetriaOk ? '✔' : '✘ FALHA GRAVE') +
+         ' Assimetria positiva: o mentor nunca fica com saldo negativo.');
+
+  // ── Teste 3 · isolamento do totem
+  const funcionarios = _lerTudo(CFG.ABAS.FUNCIONARIOS);
+  if (funcionarios.length) {
+    const m = funcionarios[0][CFG.COL_FUNCIONARIOS.matricula - 1];
+    const resposta = api_ValidarTotem(m, 'TESTE-01');
+    const camposProibidos = ['fadiga', 'score', 'nivel', 'jornada', 'horas_extras'];
+    const vazou = camposProibidos.filter(function (c) {
+      return Object.keys(resposta).indexOf(c) !== -1;
+    });
+    r.push((vazou.length === 0 ? '✔' : '✘') +
+           ' Isolamento do totem: ' +
+           (vazou.length === 0 ? 'nenhum dado sensível no payload'
+                               : 'VAZAMENTO em ' + vazou.join(', ')));
+  }
+
+  // ── Teste 4 · abas obrigatórias
+  Object.keys(CFG.ABAS).forEach(function (k) {
+    const existe = !!SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.ABAS[k]);
+    if (!existe) r.push('✘ Aba ausente: ' + CFG.ABAS[k]);
+  });
+
+  const relatorio = r.join('\n');
+  Logger.log(relatorio);
+  return relatorio;
+}

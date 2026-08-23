@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EHS Smart Enterprise — Telas Operacionais</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --graphite:#151A21; --panel:#1E252E; --panel2:#262F3A; --line:#3A4654;
+    --ink:#E6EBF1; --dim:#8E9BAA;
+    --ok:#4FBF87; --warn:#E8A33D; --danger:#E05B4B; --info:#4FA3D1;
+  }
+  body{background:var(--graphite);color:var(--ink);font-family:'Inter',system-ui,sans-serif}
+  .display{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.05em}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .panel{background:var(--panel);border:1px solid var(--line)}
+  .panel2{background:var(--panel2)}
+  .hazard{background:repeating-linear-gradient(-45deg,#E8A33D 0 12px,#151A21 12px 24px)}
+  .hazard-red{background:repeating-linear-gradient(-45deg,#E05B4B 0 12px,#151A21 12px 24px)}
+  input,select,button{font-family:inherit}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#3A4654;border-radius:4px}
+  @keyframes pulseRing{0%{box-shadow:0 0 0 0 rgba(224,91,75,.55)}70%{box-shadow:0 0 0 16px rgba(224,91,75,0)}100%{box-shadow:0 0 0 0 rgba(224,91,75,0)}}
+  .ring{animation:pulseRing 2s infinite}
+  @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .rise{animation:slideUp .35s cubic-bezier(.2,.7,.3,1) backwards}
+  @media (prefers-reduced-motion:reduce){.ring,.rise{animation:none}}
+  :focus-visible{outline:2px solid #E8A33D;outline-offset:2px}
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- ═══════════════════════════════════════════════════════════
+     BARRA DE SIMULAÇÃO — só existe no protótipo.
+     Em produção o perfil vem da sessão autenticada.
+═══════════════════════════════════════════════════════════ -->
+<div class="panel2 border-b border-[var(--line)] sticky top-0 z-50">
+  <div class="max-w-[1500px] mx-auto px-4 py-2.5 flex flex-wrap items-center gap-3">
+    <span class="mono text-[10px] tracking-[.18em] text-[var(--warn)]">SIMULADOR RBAC</span>
+    <select id="selPerfil" class="bg-[var(--graphite)] border border-[var(--line)] rounded px-3 py-1.5 text-xs mono">
+      <option value="NAT-00001">NAT-00001 · Carlos Menezes · GESTOR</option>
+      <option value="NAT-00002">NAT-00002 · Rita Alencar · SST</option>
+      <option value="NAT-00003">NAT-00003 · Jonas Prado · ALMOXARIFE (FUNCIONARIO)</option>
+      <option value="NAT-00004">NAT-00004 · Douglas Ferrão · FUNCIONARIO</option>
+      <option value="TER-00021">TER-00021 · Alan Cordeiro · TERCEIRIZADO</option>
+    </select>
+    <div class="flex gap-1.5 ml-auto">
+      <button data-nav="ponto"  class="nav-btn px-3.5 py-1.5 rounded text-xs display border border-[var(--line)]">Relógio de Ponto</button>
+      <button data-nav="totem"  class="nav-btn px-3.5 py-1.5 rounded text-xs display border border-[var(--line)]">Totem Almoxarifado</button>
+      <button data-nav="gestor" class="nav-btn px-3.5 py-1.5 rounded text-xs display border border-[var(--line)]">Dashboard do Gestor</button>
+    </div>
+  </div>
+</div>
+
+<main class="max-w-[1500px] mx-auto px-4 py-6">
+
+<!-- ═══════════════ TELA 1 · RELÓGIO DE PONTO ═══════════════ -->
+<section id="view-ponto" class="view">
+  <div class="mb-5">
+    <div class="mono text-[10px] tracking-[.18em] text-[var(--dim)] mb-1">TOT-PORTARIA-01 · ORIGEM: RELOGIO_PONTO</div>
+    <h2 class="display text-3xl">Relógio de Ponto</h2>
+    <p class="text-sm text-[var(--dim)] mt-1.5 max-w-[70ch]">Tela deliberadamente burra. Lê o crachá, grava a marcação, libera o fluxo. Nenhum alerta de fadiga, nenhuma pendência, nenhuma trava — o alerta preditivo sai por outro canal.</p>
+  </div>
+
+  <div class="grid lg:grid-cols-[1fr_380px] gap-4">
+    <div class="panel rounded-lg p-8 min-h-[420px] flex flex-col items-center justify-center text-center" id="pontoStage">
+      <div id="pontoIdle">
+        <div class="w-24 h-24 rounded-full border-2 border-dashed border-[var(--line)] flex items-center justify-center mb-6 mx-auto">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#8E9BAA" stroke-width="1.5">
+            <rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8" cy="12" r="2.5"/><path d="M14 10h5M14 14h5"/>
+          </svg>
+        </div>
+        <div class="display text-2xl mb-2">Aproxime o crachá</div>
+        <div class="mono text-xs text-[var(--dim)] mb-7">ou informe a matrícula</div>
+        <div class="flex gap-2 justify-center">
+          <input id="pontoInput" class="bg-[var(--graphite)] border border-[var(--line)] rounded px-4 py-3 mono text-center text-lg w-52" placeholder="NAT-00004" maxlength="9">
+          <button id="btnPonto" class="bg-[var(--warn)] text-[var(--graphite)] font-bold display px-6 rounded text-lg">Marcar</button>
+        </div>
+        <div class="mt-6 flex gap-1.5 justify-center flex-wrap">
+          <span class="mono text-[10px] text-[var(--dim)] mr-1 self-center">TESTE:</span>
+          <button class="chip-mat mono text-[10px] px-2 py-1 rounded border border-[var(--line)] text-[var(--dim)]">NAT-00004</button>
+          <button class="chip-mat mono text-[10px] px-2 py-1 rounded border border-[var(--line)] text-[var(--dim)]">NAT-00007</button>
+          <button class="chip-mat mono text-[10px] px-2 py-1 rounded border border-[var(--line)] text-[var(--dim)]">TER-00021</button>
+          <button class="chip-mat mono text-[10px] px-2 py-1 rounded border border-[var(--line)] text-[var(--dim)]">TER-00099</button>
+        </div>
+      </div>
+      <div id="pontoResult" class="hidden w-full"></div>
+    </div>
+
+    <aside class="panel rounded-lg p-5">
+      <div class="display text-sm text-[var(--dim)] mb-3">Últimas marcações</div>
+      <div id="pontoLog" class="space-y-1.5 mono text-[11px]"></div>
+      <div class="hazard h-1.5 rounded-sm my-4 opacity-70"></div>
+      <div class="text-[11px] text-[var(--dim)] leading-relaxed">
+        <strong class="text-[var(--ink)]">Regra do Dossiê:</strong> o ponto nunca exibe fadiga, horas extras ou risco ocupacional. Esse dado é sensível e vai só para o dashboard do gestor do setor.
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ═══════════════ TELA 2 · TOTEM DO ALMOXARIFADO ═══════════════ -->
+<section id="view-totem" class="view hidden">
+  <div class="mb-5">
+    <div class="mono text-[10px] tracking-[.18em] text-[var(--dim)] mb-1">TOT-ALMOX-02 · ORIGEM: TOTEM</div>
+    <h2 class="display text-3xl">Totem do Almoxarifado</h2>
+    <p class="text-sm text-[var(--dim)] mt-1.5 max-w-[70ch]">Entrega de EPI em quatro toques: identifica, valida NR e CA, gera a movimentação e espera a confirmação ativa do colaborador.</p>
+  </div>
+
+  <!-- Trilha de etapas -->
+  <div class="flex items-center gap-2 mb-5 overflow-x-auto pb-1">
+    <div class="step flex items-center gap-2 shrink-0" data-step="1"><span class="badge w-6 h-6 rounded-full grid place-items-center mono text-[11px] border">1</span><span class="display text-xs">Identificar</span></div>
+    <div class="h-px w-8 bg-[var(--line)] shrink-0"></div>
+    <div class="step flex items-center gap-2 shrink-0" data-step="2"><span class="badge w-6 h-6 rounded-full grid place-items-center mono text-[11px] border">2</span><span class="display text-xs">Validar</span></div>
+    <div class="h-px w-8 bg-[var(--line)] shrink-0"></div>
+    <div class="step flex items-center gap-2 shrink-0" data-step="3"><span class="badge w-6 h-6 rounded-full grid place-items-center mono text-[11px] border">3</span><span class="display text-xs">Selecionar EPI</span></div>
+    <div class="h-px w-8 bg-[var(--line)] shrink-0"></div>
+    <div class="step flex items-center gap-2 shrink-0" data-step="4"><span class="badge w-6 h-6 rounded-full grid place-items-center mono text-[11px] border">4</span><span class="display text-xs">Confirmar</span></div>
+  </div>
+
+  <div class="grid lg:grid-cols-[1fr_400px] gap-4">
+    <div class="panel rounded-lg p-6 min-h-[480px]" id="totemStage"></div>
+    <aside class="panel rounded-lg p-5">
+      <div class="display text-sm text-[var(--dim)] mb-3">Movimentações do turno</div>
+      <div id="movLog" class="space-y-2"></div>
+      <div class="hazard h-1.5 rounded-sm my-4 opacity-70"></div>
+      <div class="text-[11px] text-[var(--dim)] leading-relaxed">
+        <strong class="text-[var(--ink)]">Confirmação ativa:</strong> enquanto o status for PENDENTE, o item saiu do estoque mas ainda não é responsabilidade formal do colaborador. Sem confirmação em 24h, vira EXPIRADO e a pendência é do almoxarifado.
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ═══════════════ TELA 3 · DASHBOARD DO GESTOR ═══════════════ -->
+<section id="view-gestor" class="view hidden">
+  <div id="gestorGate"></div>
+  <div id="gestorContent" class="hidden">
+    <div class="flex flex-wrap items-end justify-between gap-4 mb-5">
+      <div>
+        <div class="mono text-[10px] tracking-[.18em] text-[var(--dim)] mb-1">ORIGEM: WEB_DESKTOP · ACESSO RESTRITO</div>
+        <h2 class="display text-3xl">Dashboard do Gestor</h2>
+        <p class="text-sm text-[var(--dim)] mt-1.5" id="gestorSubtitle"></p>
+      </div>
+      <div class="flex gap-2" id="gestorKpis"></div>
+    </div>
+
+    <!-- Alerta preditivo de fadiga -->
+    <div class="mb-5">
+      <div class="flex items-center gap-3 mb-2.5">
+        <h3 class="display text-lg">Alerta Preditivo de Fadiga</h3>
+        <span class="mono text-[10px] px-2 py-0.5 rounded border border-[var(--danger)] text-[var(--danger)]">CONFIDENCIAL · NÃO EXIBIR NO CHÃO DE FÁBRICA</span>
+      </div>
+      <div id="fadigaGrid" class="grid md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-4">
+      <div class="panel rounded-lg p-5">
+        <h3 class="display text-lg mb-3">Pendências de EPI</h3>
+        <div id="pendGrid" class="space-y-2"></div>
+      </div>
+      <div class="panel rounded-lg p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <h3 class="display text-lg">Mentorias do setor</h3>
+          <span class="mono text-[10px] px-2 py-0.5 rounded bg-[rgba(79,191,135,.15)] text-[var(--ok)]">ASSIMETRIA POSITIVA</span>
+        </div>
+        <div id="mentoriaGrid" class="space-y-2.5"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 1 · BASE DE DADOS SIMULADA
+   Cada objeto usa EXATAMENTE os nomes de coluna das 8 abas.
+   Em produção, isto vira uma chamada ao Apps Script / API.
+═══════════════════════════════════════════════════════════════ */
+
+const DB = {
+  Setores: [
+    { id_setor:'SET-001', nome_setor:'Manutenção Elétrica', centro_custo:'CC-4501',
+      id_gestor_responsavel:'NAT-00001', nivel_criticidade:'CRITICO',
+      nrs_aplicaveis:'NR-06;NR-10;NR-35', permite_terceirizado:'SIM', status:'ATIVO' },
+    { id_setor:'SET-002', nome_setor:'Caldeiraria', centro_custo:'CC-4502',
+      id_gestor_responsavel:'NAT-00009', nivel_criticidade:'ALTO',
+      nrs_aplicaveis:'NR-06;NR-12', permite_terceirizado:'NÃO', status:'ATIVO' },
+  ],
+
+  Funcoes: [
+    { id_funcao:'FUN-001', nome_funcao:'Eletricista de Manutenção', id_setor_vinculado:'SET-001',
+      epis_obrigatorios:'EPI-0001;EPI-0004;EPI-0007', epis_condicionais:'EPI-0012',
+      nrs_obrigatorias:'NR-06;NR-10;NR-35', grau_exposicao_risco:'CRITICO',
+      limite_horas_extras_mes:40, elegivel_gamificacao:'SIM', status:'ATIVO' },
+    { id_funcao:'FUN-002', nome_funcao:'Auxiliar de Almoxarifado', id_setor_vinculado:'SET-001',
+      epis_obrigatorios:'EPI-0001;EPI-0004', epis_condicionais:'',
+      nrs_obrigatorias:'NR-06', grau_exposicao_risco:'BAIXO',
+      limite_horas_extras_mes:40, elegivel_gamificacao:'SIM', status:'ATIVO' },
+    { id_funcao:'FUN-003', nome_funcao:'Montador Eletromecânico', id_setor_vinculado:'SET-001',
+      epis_obrigatorios:'EPI-0001;EPI-0004;EPI-0012', epis_condicionais:'',
+      nrs_obrigatorias:'NR-06;NR-12;NR-35', grau_exposicao_risco:'ALTO',
+      limite_horas_extras_mes:40, elegivel_gamificacao:'NÃO', status:'ATIVO' },
+  ],
+
+  Empresas_Terceiras: [
+    { id_empresa:'EMP-001', razao_social:'Eletrotec Serviços Industriais Ltda',
+      numero_contrato:'CTR-2026-0045', status_contrato:'VIGENTE',
+      status_documentacao:'REGULAR', setores_autorizados:'SET-001', status:'ATIVO' },
+    { id_empresa:'EMP-002', razao_social:'Nova Rota Manutenção Ltda',
+      numero_contrato:'CTR-2025-0180', status_contrato:'VENCIDO',
+      status_documentacao:'IRREGULAR', setores_autorizados:'SET-001', status:'BLOQUEADO' },
+  ],
+
+  Funcionarios: [
+    { matricula:'NAT-00001', nome_completo:'Carlos Menezes', tipo_vinculo:'NATIVO', empresa:'Planta Matriz',
+      setor:'SET-001', funcao:'FUN-001', perfil_rbac:'GESTOR', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'NAT-00002', nome_completo:'Rita Alencar', tipo_vinculo:'NATIVO', empresa:'Planta Matriz',
+      setor:'SET-001', funcao:'FUN-001', perfil_rbac:'SST', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'NAT-00003', nome_completo:'Jonas Prado', tipo_vinculo:'NATIVO', empresa:'Planta Matriz',
+      setor:'SET-001', funcao:'FUN-002', perfil_rbac:'FUNCIONARIO', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'NAT-00004', nome_completo:'Douglas Ferrão', tipo_vinculo:'NATIVO', empresa:'Planta Matriz',
+      setor:'SET-001', funcao:'FUN-001', perfil_rbac:'FUNCIONARIO', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'NAT-00007', nome_completo:'Wesley Tanaka', tipo_vinculo:'NATIVO', empresa:'Planta Matriz',
+      setor:'SET-001', funcao:'FUN-003', perfil_rbac:'FUNCIONARIO', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'NAT-00011', nome_completo:'Ivone Barcelos', tipo_vinculo:'NATIVO', empresa:'Planta Matriz',
+      setor:'SET-001', funcao:'FUN-001', perfil_rbac:'FUNCIONARIO', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'TER-00021', nome_completo:'Alan Cordeiro', tipo_vinculo:'TERCEIRIZADO', empresa:'EMP-001',
+      setor:'SET-001', funcao:'FUN-003', perfil_rbac:'TERCEIRIZADO', id_gestor:'NAT-00001', status:'ATIVO' },
+    { matricula:'TER-00099', nome_completo:'Márcio Leitão', tipo_vinculo:'TERCEIRIZADO', empresa:'EMP-002',
+      setor:'SET-001', funcao:'FUN-003', perfil_rbac:'TERCEIRIZADO', id_gestor:'NAT-00001',
+      status:'BLOQUEADO', motivo_bloqueio:'Contrato CTR-2025-0180 vencido e documentação irregular' },
+  ],
+
+  Equipamentos_EPI_EPC: [
+    { codigo_epi:'EPI-0001', nome:'Capacete Classe B com jugular', categoria:'EPI', numero_ca:'31469',
+      validade_ca:'2027-05-30', status_ca:'VÁLIDO', vida_util_dias:730, estoque_atual:84,
+      ponto_pedido:30, status_estoque:'OK', custo_unitario:38.90 },
+    { codigo_epi:'EPI-0004', nome:'Óculos de proteção incolor AE', categoria:'EPI', numero_ca:'40887',
+      validade_ca:'2026-11-12', status_ca:'VÁLIDO', vida_util_dias:180, estoque_atual:26,
+      ponto_pedido:40, status_estoque:'REPOR', custo_unitario:12.40 },
+    { codigo_epi:'EPI-0007', nome:'Luva isolante classe 0 · 1000V', categoria:'EPI', numero_ca:'29113',
+      validade_ca:'2026-07-20', status_ca:'VENCIDO', vida_util_dias:365, estoque_atual:12,
+      ponto_pedido:10, status_estoque:'OK', custo_unitario:186.00 },
+    { codigo_epi:'EPI-0012', nome:'Cinto paraquedista 5 pontos', categoria:'EPI', numero_ca:'35502',
+      validade_ca:'2028-02-28', status_ca:'VÁLIDO', vida_util_dias:1095, estoque_atual:7,
+      ponto_pedido:6, status_estoque:'OK', custo_unitario:412.00 },
+  ],
+
+  /* Treinamentos válidos por matrícula — alimenta a trava de NR */
+  Treinamentos: {
+    'NAT-00004': { 'NR-06':'2027-03-01', 'NR-10':'2027-01-15', 'NR-35':'2026-12-10' },
+    'NAT-00007': { 'NR-06':'2027-04-20', 'NR-12':'2027-02-02', 'NR-35':'2026-06-30' }, // NR-35 vencida
+    'NAT-00003': { 'NR-06':'2027-08-01' },
+    'NAT-00011': { 'NR-06':'2027-05-05', 'NR-10':'2027-03-19', 'NR-35':'2027-01-08' },
+    'TER-00021': { 'NR-06':'2026-12-01', 'NR-12':'2027-01-30', 'NR-35':'2026-11-05' },
+    'TER-00099': { 'NR-06':'2026-09-01', 'NR-12':'2026-10-01', 'NR-35':'2026-10-01' },
+  },
+
+  /* Dados de jornada — insumo do motor preditivo de fadiga */
+  Jornada: {
+    'NAT-00004': { horas_extras_mes:12, turnos_consecutivos:3, intervalo_min_horas:11, atividades_criticas_7d:2 },
+    'NAT-00007': { horas_extras_mes:47, turnos_consecutivos:9, intervalo_min_horas:8,  atividades_criticas_7d:9 },
+    'NAT-00011': { horas_extras_mes:31, turnos_consecutivos:6, intervalo_min_horas:10, atividades_criticas_7d:5 },
+    'NAT-00003': { horas_extras_mes:4,  turnos_consecutivos:2, intervalo_min_horas:12, atividades_criticas_7d:0 },
+  },
+
+  Gamificacao_Mentoria: [
+    { id_vinculo:'MNT-0001', matricula_mentor:'NAT-00004', matricula_mentorado:'NAT-00011',
+      id_setor:'SET-001', pontos_acumulados_mentorado:820, pontos_base_inicial:500,
+      percentual_repasse_mentor:0.15, infracoes_mentorado:0, status_vinculo:'ATIVO', validado_por_sst:true },
+    { id_vinculo:'MNT-0002', matricula_mentor:'NAT-00011', matricula_mentorado:'NAT-00003',
+      id_setor:'SET-001', pontos_acumulados_mentorado:610, pontos_base_inicial:430,
+      percentual_repasse_mentor:0.12, infracoes_mentorado:3, status_vinculo:'ATIVO', validado_por_sst:true },
+    { id_vinculo:'MNT-0003', matricula_mentor:'NAT-00003', matricula_mentorado:'NAT-00007',
+      id_setor:'SET-001', pontos_acumulados_mentorado:290, pontos_base_inicial:380,
+      percentual_repasse_mentor:0.10, infracoes_mentorado:5, status_vinculo:'ATIVO', validado_por_sst:false },
+  ],
+
+  Movimentacoes_Trocas: [],
+  Log_Auditoria: [],
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 2 · RBAC
+   Uma única fonte de verdade sobre quem vê o quê.
+   O front esconde; o back-end também precisa negar. Nunca só aqui.
+═══════════════════════════════════════════════════════════════ */
+
+const RBAC = {
+  FUNCIONARIO:  { ponto:true, totem:'proprio',  gestor:false, alerta_fadiga:false, gamificacao:true  },
+  TERCEIRIZADO: { ponto:true, totem:'proprio',  gestor:false, alerta_fadiga:false, gamificacao:false },
+  GESTOR:       { ponto:true, totem:'consulta', gestor:true,  alerta_fadiga:true,  gamificacao:'consulta' },
+  SST:          { ponto:true, totem:true,       gestor:true,  alerta_fadiga:true,  gamificacao:'gestao' },
+  ADMIN:        { ponto:true, totem:true,       gestor:true,  alerta_fadiga:true,  gamificacao:'gestao' },
+};
+
+let SESSAO = null;
+
+function abrirSessao(matricula){
+  const f = DB.Funcionarios.find(x => x.matricula === matricula);
+  SESSAO = { ...f, permissoes: RBAC[f.perfil_rbac] };
+  registrarLog({ acao_realizada:'LOGIN', tabela_afetada:'Funcionarios',
+                 id_registro_afetado:matricula, origem_acao:'WEB_DESKTOP', resultado:'SUCESSO' });
+  return SESSAO;
+}
+
+function podeVer(recurso){
+  if(!SESSAO) return false;
+  return SESSAO.permissoes[recurso] === true || SESSAO.permissoes[recurso] === 'gestao';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 3 · AUDITORIA (corrente de hash simplificada)
+   Toda ação relevante passa por aqui. Nada é apagado.
+═══════════════════════════════════════════════════════════════ */
+
+function hashSimples(txt){
+  let h = 0;
+  for(let i=0;i<txt.length;i++){ h = ((h<<5)-h) + txt.charCodeAt(i); h |= 0; }
+  return Math.abs(h).toString(16).padStart(8,'0');
+}
+
+function registrarLog(evt){
+  const anterior = DB.Log_Auditoria[DB.Log_Auditoria.length-1];
+  const seq = DB.Log_Auditoria.length + 1;
+  const linha = {
+    id_log: 'LOG-' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(seq).padStart(6,'0'),
+    timestamp: new Date().toISOString(),
+    matricula_usuario: SESSAO ? SESSAO.matricula : 'SISTEMA',
+    perfil_rbac_no_momento: SESSAO ? SESSAO.perfil_rbac : 'SISTEMA',
+    id_dispositivo: evt.id_dispositivo || 'WEB-01',
+    criticidade: evt.criticidade || 'INFO',
+    sequencia: seq,
+    hash_anterior: anterior ? anterior.hash_registro : '00000000',
+    ...evt,
+  };
+  linha.hash_registro = hashSimples(JSON.stringify(linha));
+  DB.Log_Auditoria.push(linha);   // append-only: só push, nunca splice
+  return linha;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 4 · MOTOR DE REGRAS
+   Travas de NR, validação de CA e cálculo de fadiga.
+═══════════════════════════════════════════════════════════════ */
+
+const HOJE = new Date('2026-08-16');
+
+function getFuncao(m){ return DB.Funcoes.find(f => f.id_funcao === m.funcao); }
+function getSetor(m){  return DB.Setores.find(s => s.id_setor === m.setor); }
+function getEpi(cod){  return DB.Equipamentos_EPI_EPC.find(e => e.codigo_epi === cod); }
+
+/* Valida o colaborador: vínculo, contrato, setor e NRs */
+function validarColaborador(matricula){
+  const p = DB.Funcionarios.find(f => f.matricula === matricula);
+  if(!p) return { liberado:false, motivos:['Matrícula não cadastrada'], pessoa:null };
+
+  const motivos = [];
+  const alertas = [];
+
+  if(p.status !== 'ATIVO') motivos.push(p.motivo_bloqueio || `Colaborador com status ${p.status}`);
+
+  if(p.tipo_vinculo === 'TERCEIRIZADO'){
+    const emp = DB.Empresas_Terceiras.find(e => e.id_empresa === p.empresa);
+    if(emp){
+      if(emp.status_contrato !== 'VIGENTE') motivos.push(`Contrato ${emp.numero_contrato} · ${emp.status_contrato}`);
+      if(emp.status_documentacao !== 'REGULAR') motivos.push(`Documentação da contratada · ${emp.status_documentacao}`);
+    }
+    const setor = getSetor(p);
+    if(setor && setor.permite_terceirizado === 'NÃO') motivos.push(`Setor ${setor.nome_setor} não permite terceirizados`);
+  }
+
+  const fn = getFuncao(p);
+  const nrs = fn ? fn.nrs_obrigatorias.split(';') : [];
+  const tre = DB.Treinamentos[matricula] || {};
+  nrs.forEach(nr => {
+    const venc = tre[nr];
+    if(!venc){ motivos.push(`${nr} · treinamento não registrado`); return; }
+    const d = new Date(venc);
+    const dias = Math.round((d - HOJE)/86400000);
+    if(dias < 0) motivos.push(`${nr} · vencida há ${Math.abs(dias)} dias`);
+    else if(dias <= 30) alertas.push(`${nr} · vence em ${dias} dias`);
+  });
+
+  return { liberado: motivos.length === 0, motivos, alertas, pessoa:p, funcao:fn, setor:getSetor(p) };
+}
+
+/* Monta a lista de EPIs devidos à função, já com o status do CA */
+function listarEpisDevidos(pessoa){
+  const fn = getFuncao(pessoa);
+  if(!fn) return [];
+  const obrig = fn.epis_obrigatorios ? fn.epis_obrigatorios.split(';') : [];
+  const cond  = fn.epis_condicionais ? fn.epis_condicionais.split(';').filter(Boolean) : [];
+  return [...obrig.map(c=>({cod:c,tipo:'OBRIGATÓRIO'})), ...cond.map(c=>({cod:c,tipo:'CONDICIONAL'}))]
+    .map(i => {
+      const e = getEpi(i.cod);
+      if(!e) return null;
+      const bloqueios = [];
+      if(e.status_ca === 'VENCIDO') bloqueios.push(`CA ${e.numero_ca} vencido`);
+      if(e.estoque_atual <= 0)      bloqueios.push('Sem estoque');
+      return { ...e, exigencia:i.tipo, bloqueios, liberavel: bloqueios.length === 0 };
+    }).filter(Boolean);
+}
+
+/* Motor preditivo de fadiga — devolve nível e justificativa */
+function calcularFadiga(matricula){
+  const j = DB.Jornada[matricula];
+  if(!j) return null;
+  const p = DB.Funcionarios.find(f => f.matricula === matricula);
+  const fn = getFuncao(p);
+  const limite = fn ? fn.limite_horas_extras_mes : 40;
+
+  let score = 0;
+  const fatores = [];
+
+  if(j.horas_extras_mes > limite){ score += 3; fatores.push(`${j.horas_extras_mes}h extras (limite ${limite}h)`); }
+  else if(j.horas_extras_mes > limite*0.7){ score += 1; fatores.push(`${j.horas_extras_mes}h extras acumuladas`); }
+
+  if(j.turnos_consecutivos >= 8){ score += 3; fatores.push(`${j.turnos_consecutivos} turnos consecutivos`); }
+  else if(j.turnos_consecutivos >= 5){ score += 1; fatores.push(`${j.turnos_consecutivos} turnos consecutivos`); }
+
+  if(j.intervalo_min_horas < 11){ score += 2; fatores.push(`Interjornada de ${j.intervalo_min_horas}h (mínimo 11h)`); }
+
+  if(j.atividades_criticas_7d >= 8){ score += 2; fatores.push(`${j.atividades_criticas_7d} atividades críticas em 7 dias`); }
+  else if(j.atividades_criticas_7d >= 4){ score += 1; fatores.push(`${j.atividades_criticas_7d} atividades críticas em 7 dias`); }
+
+  if(fn && fn.grau_exposicao_risco === 'CRITICO') score += 1;
+
+  let nivel = 'BAIXO';
+  if(score >= 8) nivel = 'CRITICO';
+  else if(score >= 5) nivel = 'ALTO';
+  else if(score >= 2) nivel = 'MODERADO';
+
+  return { matricula, nome:p.nome_completo, funcao:fn?fn.nome_funcao:'—', nivel, score, fatores, jornada:j };
+}
+
+/* Gamificação: o bônus do mentor nunca é reduzido por erro do mentorado */
+function calcularBonusMentor(v){
+  const evolucaoBruta = v.pontos_acumulados_mentorado - v.pontos_base_inicial;
+  const evolucaoLiquida = Math.max(0, evolucaoBruta);          // piso travado em zero
+  const saldo = evolucaoLiquida * v.percentual_repasse_mentor; // infrações não entram na conta
+  return {
+    evolucaoBruta,
+    evolucaoLiquida,
+    saldo_bonus_mentor: Math.round(saldo * 100) / 100,
+    impacto_infracoes_no_mentor: 0,                            // constante, por desenho
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 5 · TELA 1 — RELÓGIO DE PONTO
+═══════════════════════════════════════════════════════════════ */
+
+const marcacoes = [];
+
+function marcarPonto(matricula){
+  const v = validarColaborador(matricula);
+  const stage = document.getElementById('pontoResult');
+  const idle  = document.getElementById('pontoIdle');
+  idle.classList.add('hidden');
+  stage.classList.remove('hidden');
+
+  if(!v.pessoa){
+    stage.innerHTML = cartaoPonto('erro','Crachá não reconhecido','Procure o RH ou a portaria.','');
+  } else if(!v.liberado){
+    // Bloqueio normativo: mensagem objetiva, sem expor dado de saúde
+    stage.innerHTML = cartaoPonto('bloqueio', v.pessoa.nome_completo,
+      'Marcação registrada. Acesso a atividades pendente de regularização.',
+      v.motivos[0]);
+    registrarLog({ acao_realizada:'BLOQUEIO_ATIVIDADE', tabela_afetada:'Funcionarios',
+      id_registro_afetado:matricula, origem_acao:'RELOGIO_PONTO', id_dispositivo:'TOT-PORTARIA-01',
+      resultado:'NEGADO_REGRA', criticidade:'CRITICO', justificativa:v.motivos.join(' | ') });
+  } else {
+    stage.innerHTML = cartaoPonto('ok', v.pessoa.nome_completo,
+      v.funcao.nome_funcao + ' · ' + v.setor.nome_setor, '');
+    registrarLog({ acao_realizada:'LOGIN', tabela_afetada:'Funcionarios',
+      id_registro_afetado:matricula, origem_acao:'RELOGIO_PONTO', id_dispositivo:'TOT-PORTARIA-01',
+      resultado:'SUCESSO' });
+  }
+
+  marcacoes.unshift({ hora:new Date().toLocaleTimeString('pt-BR'), matricula,
+    nome: v.pessoa ? v.pessoa.nome_completo : '—', ok: v.liberado });
+  renderPontoLog();
+
+  // O totem volta ao repouso sozinho: fluxo de portaria não pode acumular fila
+  setTimeout(()=>{ stage.classList.add('hidden'); idle.classList.remove('hidden');
+                   document.getElementById('pontoInput').value=''; }, 3200);
+}
+
+function cartaoPonto(tipo, titulo, sub, detalhe){
+  const cfg = {
+    ok:       { cor:'var(--ok)',     icone:'✓', rot:'ENTRADA REGISTRADA' },
+    bloqueio: { cor:'var(--warn)',   icone:'!', rot:'ENTRADA REGISTRADA · PENDÊNCIA' },
+    erro:     { cor:'var(--danger)', icone:'✕', rot:'NÃO IDENTIFICADO' },
+  }[tipo];
+  return `
+    <div class="rise text-center">
+      <div class="w-20 h-20 rounded-full grid place-items-center mx-auto mb-5 text-4xl font-bold"
+           style="background:${cfg.cor}20;color:${cfg.cor};border:2px solid ${cfg.cor}">${cfg.icone}</div>
+      <div class="mono text-[11px] tracking-[.16em] mb-2" style="color:${cfg.cor}">${cfg.rot}</div>
+      <div class="display text-4xl mb-2">${titulo}</div>
+      <div class="text-sm text-[var(--dim)] mb-1">${sub}</div>
+      ${detalhe ? `<div class="mono text-[11px] mt-3 inline-block px-3 py-1.5 rounded"
+           style="background:${cfg.cor}15;color:${cfg.cor}">${detalhe}</div>` : ''}
+      <div class="mono text-2xl mt-6 text-[var(--dim)]">${new Date().toLocaleTimeString('pt-BR')}</div>
+    </div>`;
+}
+
+function renderPontoLog(){
+  document.getElementById('pontoLog').innerHTML = marcacoes.slice(0,9).map(m => `
+    <div class="flex items-center gap-2 py-1.5 border-b border-[var(--line)]/50">
+      <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:${m.ok?'var(--ok)':'var(--warn)'}"></span>
+      <span class="text-[var(--dim)]">${m.hora}</span>
+      <span class="truncate">${m.nome}</span>
+      <span class="ml-auto text-[var(--dim)] text-[10px]">${m.matricula}</span>
+    </div>`).join('') || '<div class="text-[var(--dim)] text-[11px]">Nenhuma marcação neste turno.</div>';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 6 · TELA 2 — TOTEM DO ALMOXARIFADO
+═══════════════════════════════════════════════════════════════ */
+
+let totemEstado = { etapa:1, pessoa:null, validacao:null, epiSelecionado:null, movPendente:null };
+
+function pintarEtapa(n){
+  document.querySelectorAll('#view-totem .step').forEach(s => {
+    const i = +s.dataset.step;
+    const b = s.querySelector('.badge');
+    const ativo = i <= n;
+    b.style.background = ativo ? 'var(--warn)' : 'transparent';
+    b.style.color       = ativo ? 'var(--graphite)' : 'var(--dim)';
+    b.style.borderColor = ativo ? 'var(--warn)' : 'var(--line)';
+    s.style.opacity = ativo ? '1' : '.45';
+  });
+}
+
+function totemEtapa1(){
+  totemEstado = { etapa:1, pessoa:null, validacao:null, epiSelecionado:null, movPendente:null };
+  pintarEtapa(1);
+  document.getElementById('totemStage').innerHTML = `
+    <div class="rise text-center py-10">
+      <div class="display text-2xl mb-2">Identifique o colaborador</div>
+      <div class="mono text-xs text-[var(--dim)] mb-8">Crachá RFID, facial ou matrícula</div>
+      <div class="flex gap-2 justify-center mb-6">
+        <input id="totemInput" class="bg-[var(--graphite)] border border-[var(--line)] rounded px-4 py-3 mono text-center text-lg w-56" placeholder="NAT-00004">
+        <button onclick="totemEtapa2(document.getElementById('totemInput').value.trim().toUpperCase())"
+                class="bg-[var(--warn)] text-[var(--graphite)] font-bold display px-6 rounded text-lg">Buscar</button>
+      </div>
+      <div class="flex gap-1.5 justify-center flex-wrap">
+        <span class="mono text-[10px] text-[var(--dim)] self-center mr-1">TESTE:</span>
+        ${['NAT-00004','NAT-00007','TER-00021','TER-00099'].map(m =>
+          `<button onclick="totemEtapa2('${m}')" class="mono text-[10px] px-2 py-1 rounded border border-[var(--line)] text-[var(--dim)]">${m}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+function totemEtapa2(matricula){
+  const v = validarColaborador(matricula);
+  totemEstado.pessoa = v.pessoa; totemEstado.validacao = v;
+  pintarEtapa(2);
+
+  if(!v.pessoa){
+    document.getElementById('totemStage').innerHTML = `
+      <div class="rise text-center py-16">
+        <div class="display text-3xl mb-3" style="color:var(--danger)">Matrícula não encontrada</div>
+        <p class="text-sm text-[var(--dim)] mb-7">Confira o crachá ou procure o RH para regularizar o cadastro.</p>
+        <button onclick="totemEtapa1()" class="display px-6 py-2.5 rounded border border-[var(--line)]">Voltar</button>
+      </div>`;
+    return;
+  }
+
+  if(!v.liberado){
+    registrarLog({ acao_realizada:'BLOQUEIO_ATIVIDADE', tabela_afetada:'Funcionarios',
+      id_registro_afetado:matricula, origem_acao:'TOTEM', id_dispositivo:'TOT-ALMOX-02',
+      resultado:'NEGADO_REGRA', criticidade:'CRITICO', justificativa:v.motivos.join(' | ') });
+
+    document.getElementById('totemStage').innerHTML = `
+      <div class="rise">
+        <div class="hazard-red h-2 rounded-sm mb-5"></div>
+        <div class="flex items-start gap-4 mb-5">
+          <div class="w-14 h-14 rounded-full grid place-items-center text-3xl font-bold shrink-0 ring"
+               style="background:rgba(224,91,75,.15);color:var(--danger);border:2px solid var(--danger)">✕</div>
+          <div>
+            <div class="mono text-[11px] tracking-[.16em] mb-1" style="color:var(--danger)">ENTREGA BLOQUEADA</div>
+            <div class="display text-3xl">${v.pessoa.nome_completo}</div>
+            <div class="mono text-xs text-[var(--dim)] mt-1">${v.pessoa.matricula} · ${v.pessoa.tipo_vinculo}</div>
+          </div>
+        </div>
+        <div class="panel2 rounded p-4 mb-5">
+          <div class="display text-sm text-[var(--dim)] mb-2.5">Pendências a regularizar</div>
+          ${v.motivos.map(m => `
+            <div class="flex gap-2.5 items-start py-1.5 text-sm">
+              <span style="color:var(--danger)">▪</span><span>${m}</span>
+            </div>`).join('')}
+        </div>
+        <p class="text-xs text-[var(--dim)] mb-5">Encaminhe o colaborador à SST. A tentativa foi registrada em log com justificativa.</p>
+        <button onclick="totemEtapa1()" class="display px-6 py-2.5 rounded border border-[var(--line)]">Próximo colaborador</button>
+      </div>`;
+    return;
+  }
+
+  const episDevidos = listarEpisDevidos(v.pessoa);
+  totemEstado.epis = episDevidos;
+
+  document.getElementById('totemStage').innerHTML = `
+    <div class="rise">
+      <div class="flex items-start gap-4 mb-5">
+        <div class="w-14 h-14 rounded-full grid place-items-center text-3xl font-bold shrink-0"
+             style="background:rgba(79,191,135,.15);color:var(--ok);border:2px solid var(--ok)">✓</div>
+        <div class="flex-1">
+          <div class="mono text-[11px] tracking-[.16em] mb-1" style="color:var(--ok)">CONFORMIDADE VALIDADA</div>
+          <div class="display text-3xl">${v.pessoa.nome_completo}</div>
+          <div class="mono text-xs text-[var(--dim)] mt-1">${v.pessoa.matricula} · ${v.funcao.nome_funcao} · ${v.setor.nome_setor}</div>
+        </div>
+      </div>
+      ${v.alertas.length ? `
+        <div class="rounded p-3 mb-4 text-xs" style="background:rgba(232,163,61,.12);border-left:3px solid var(--warn)">
+          <strong class="display">Atenção · reciclagem próxima:</strong> ${v.alertas.join(' · ')}
+        </div>` : ''}
+      <div class="display text-sm text-[var(--dim)] mb-2.5">EPIs previstos para a função</div>
+      <div class="space-y-2 mb-5">
+        ${episDevidos.map(e => `
+          <button ${e.liberavel ? `onclick="totemEtapa3('${e.codigo_epi}')"` : 'disabled'}
+            class="w-full text-left panel2 rounded p-3.5 flex items-center gap-3 ${e.liberavel?'':'opacity-55 cursor-not-allowed'}"
+            style="border-left:3px solid ${e.liberavel?'var(--ok)':'var(--danger)'}">
+            <div class="flex-1 min-w-0">
+              <div class="font-semibold text-sm truncate">${e.nome}</div>
+              <div class="mono text-[10px] text-[var(--dim)] mt-0.5">
+                ${e.codigo_epi} · CA ${e.numero_ca} · vida útil ${e.vida_util_dias}d · estoque ${e.estoque_atual}
+              </div>
+              ${e.bloqueios.length ? `<div class="mono text-[10px] mt-1" style="color:var(--danger)">${e.bloqueios.join(' · ')}</div>`:''}
+            </div>
+            <span class="mono text-[9px] px-2 py-1 rounded shrink-0"
+                  style="background:${e.exigencia==='OBRIGATÓRIO'?'rgba(232,163,61,.15);color:var(--warn)':'rgba(142,155,170,.15);color:var(--dim)'}">${e.exigencia}</span>
+          </button>`).join('')}
+      </div>
+      <button onclick="totemEtapa1()" class="display text-xs px-4 py-2 rounded border border-[var(--line)] text-[var(--dim)]">Cancelar</button>
+    </div>`;
+}
+
+function totemEtapa3(codigo){
+  const e = getEpi(codigo);
+  totemEstado.epiSelecionado = e;
+  pintarEtapa(3);
+  document.getElementById('totemStage').innerHTML = `
+    <div class="rise">
+      <div class="mono text-[11px] tracking-[.16em] text-[var(--dim)] mb-2">CONFERÊNCIA DA ENTREGA</div>
+      <div class="display text-2xl mb-5">${e.nome}</div>
+      <div class="grid sm:grid-cols-2 gap-2.5 mb-5">
+        ${[['codigo_epi',e.codigo_epi],['numero_ca',e.numero_ca+' · '+e.status_ca],
+           ['vida_util_dias',e.vida_util_dias+' dias'],['validade calculada', dataFutura(e.vida_util_dias)],
+           ['estoque_atual',e.estoque_atual+' un'],['custo_unitario','R$ '+e.custo_unitario.toFixed(2)]].map(([k,v])=>`
+          <div class="panel2 rounded p-3">
+            <div class="mono text-[10px] text-[var(--dim)] mb-1">${k}</div>
+            <div class="mono text-sm">${v}</div>
+          </div>`).join('')}
+      </div>
+      <div class="mb-5">
+        <label class="mono text-[10px] text-[var(--dim)] block mb-1.5">tipo_movimentacao</label>
+        <select id="tipoMov" onchange="alternarMotivo()" class="w-full bg-[var(--graphite)] border border-[var(--line)] rounded px-3 py-2.5 mono text-sm">
+          <option value="ENTREGA">ENTREGA · primeira via</option>
+          <option value="TROCA">TROCA · substituição</option>
+        </select>
+      </div>
+      <div id="boxMotivo" class="mb-6 hidden">
+        <label class="mono text-[10px] text-[var(--dim)] block mb-1.5">motivo_troca · obrigatório</label>
+        <select id="motivoTroca" class="w-full bg-[var(--graphite)] border border-[var(--line)] rounded px-3 py-2.5 mono text-sm">
+          <option value="DESGASTE_NATURAL">DESGASTE_NATURAL · impacto positivo</option>
+          <option value="AVARIA">AVARIA · impacto negativo</option>
+          <option value="PERDA_EXTRAVIO">PERDA_EXTRAVIO · impacto negativo</option>
+          <option value="VENCIMENTO_CA">VENCIMENTO_CA · impacto neutro</option>
+          <option value="FIM_VIDA_UTIL">FIM_VIDA_UTIL · impacto positivo</option>
+        </select>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="gerarMovimentacao()" class="flex-1 bg-[var(--warn)] text-[var(--graphite)] font-bold display py-3.5 rounded text-lg">Gerar entrega</button>
+        <button onclick="totemEtapa2('${totemEstado.pessoa.matricula}')" class="display px-5 rounded border border-[var(--line)] text-[var(--dim)]">Voltar</button>
+      </div>
+    </div>`;
+}
+
+function alternarMotivo(){
+  const t = document.getElementById('tipoMov').value;
+  document.getElementById('boxMotivo').classList.toggle('hidden', t !== 'TROCA');
+}
+
+function dataFutura(dias){
+  const d = new Date(HOJE); d.setDate(d.getDate()+dias);
+  return d.toLocaleDateString('pt-BR');
+}
+
+function gerarMovimentacao(){
+  const tipo = document.getElementById('tipoMov').value;
+  const motivo = tipo === 'TROCA' ? document.getElementById('motivoTroca').value : 'N/A';
+  const e = totemEstado.epiSelecionado;
+  const p = totemEstado.pessoa;
+
+  const impacto = ['DESGASTE_NATURAL','FIM_VIDA_UTIL'].includes(motivo) ? 'POSITIVO'
+                : ['AVARIA','PERDA_EXTRAVIO'].includes(motivo) ? 'NEGATIVO' : 'NEUTRO';
+
+  const seq = DB.Movimentacoes_Trocas.length + 1;
+  const mov = {
+    id_movimentacao: 'MOV-' + HOJE.toISOString().slice(0,10).replace(/-/g,'') + '-' + String(seq).padStart(4,'0'),
+    data_hora: new Date().toISOString(),
+    matricula: p.matricula,
+    codigo_epi: e.codigo_epi,
+    tipo_movimentacao: tipo,
+    quantidade: 1,
+    motivo_troca: motivo,
+    ca_no_momento: e.numero_ca,                       // snapshot para auditoria futura
+    data_validade_calculada: dataFutura(e.vida_util_dias),
+    status_confirmacao_totem: 'PENDENTE',
+    metodo_confirmacao: null,
+    timestamp_confirmacao: null,
+    id_totem: 'TOT-ALMOX-02',
+    responsavel_almox: SESSAO ? SESSAO.matricula : 'NAT-00003',
+    impacto_gamificacao: impacto,
+  };
+
+  DB.Movimentacoes_Trocas.push(mov);                  // append-only
+  e.estoque_atual -= 1;                               // baixa derivada da movimentação
+  totemEstado.movPendente = mov;
+
+  registrarLog({ acao_realizada: tipo === 'TROCA' ? 'TROCA_EPI' : 'ENTREGA_EPI',
+    tabela_afetada:'Movimentacoes_Trocas', id_registro_afetado:mov.id_movimentacao,
+    origem_acao:'TOTEM', id_dispositivo:'TOT-ALMOX-02', resultado:'SUCESSO',
+    valor_novo: JSON.stringify({ matricula:p.matricula, codigo_epi:e.codigo_epi, status:'PENDENTE' }) });
+
+  totemEtapa4();
+  renderMovLog();
+}
+
+function totemEtapa4(){
+  const mov = totemEstado.movPendente;
+  const e = totemEstado.epiSelecionado;
+  pintarEtapa(4);
+  document.getElementById('totemStage').innerHTML = `
+    <div class="rise text-center py-6">
+      <div class="hazard h-2 rounded-sm mb-7"></div>
+      <div class="mono text-[11px] tracking-[.16em] mb-3" style="color:var(--warn)">AGUARDANDO CONFIRMAÇÃO DO COLABORADOR</div>
+      <div class="display text-2xl mb-1">${totemEstado.pessoa.nome_completo}</div>
+      <div class="text-sm text-[var(--dim)] mb-1">${e.nome}</div>
+      <div class="mono text-[11px] text-[var(--dim)] mb-8">${mov.id_movimentacao} · validade ${mov.data_validade_calculada}</div>
+
+      <p class="text-sm text-[var(--dim)] max-w-md mx-auto mb-7">
+        Confirme o recebimento no leitor. Enquanto isso, o item já saiu do estoque mas ainda não está sob sua responsabilidade formal.
+      </p>
+
+      <div class="flex gap-2 justify-center flex-wrap mb-6">
+        ${[['CRACHA_RFID','Crachá RFID'],['FACIAL','Facial'],['PIN','PIN']].map(([k,l])=>`
+          <button onclick="confirmarRecebimento('${k}')"
+            class="bg-[var(--ok)] text-[var(--graphite)] font-bold display px-6 py-3.5 rounded">${l}</button>`).join('')}
+      </div>
+      <button onclick="recusarRecebimento()" class="display text-xs px-4 py-2 rounded border border-[var(--danger)]" style="color:var(--danger)">Colaborador recusou</button>
+    </div>`;
+}
+
+function confirmarRecebimento(metodo){
+  const mov = totemEstado.movPendente;
+  mov.status_confirmacao_totem = 'CONFIRMADO';
+  mov.metodo_confirmacao = metodo;
+  mov.timestamp_confirmacao = new Date().toISOString();
+
+  registrarLog({ acao_realizada:'ENTREGA_EPI', tabela_afetada:'Movimentacoes_Trocas',
+    id_registro_afetado:mov.id_movimentacao, origem_acao:'TOTEM', id_dispositivo:'TOT-ALMOX-02',
+    resultado:'SUCESSO', criticidade:'INFO',
+    valor_anterior: JSON.stringify({status:'PENDENTE'}),
+    valor_novo: JSON.stringify({status:'CONFIRMADO', metodo_confirmacao:metodo}) });
+
+  document.getElementById('totemStage').innerHTML = `
+    <div class="rise text-center py-16">
+      <div class="w-20 h-20 rounded-full grid place-items-center mx-auto mb-6 text-4xl font-bold"
+           style="background:rgba(79,191,135,.15);color:var(--ok);border:2px solid var(--ok)">✓</div>
+      <div class="display text-3xl mb-2">Entrega confirmada</div>
+      <div class="mono text-xs text-[var(--dim)] mb-8">${mov.id_movimentacao} · ${metodo}</div>
+      <button onclick="totemEtapa1()" class="bg-[var(--warn)] text-[var(--graphite)] font-bold display px-8 py-3 rounded">Próximo colaborador</button>
+    </div>`;
+  renderMovLog();
+  setTimeout(totemEtapa1, 4000);
+}
+
+function recusarRecebimento(){
+  const mov = totemEstado.movPendente;
+  mov.status_confirmacao_totem = 'RECUSADO';
+  const e = getEpi(mov.codigo_epi);
+  e.estoque_atual += 1;   // estorno da baixa
+
+  registrarLog({ acao_realizada:'ESTORNO', tabela_afetada:'Movimentacoes_Trocas',
+    id_registro_afetado:mov.id_movimentacao, origem_acao:'TOTEM', id_dispositivo:'TOT-ALMOX-02',
+    resultado:'SUCESSO', criticidade:'AVISO',
+    justificativa:'Colaborador recusou o recebimento no totem' });
+
+  renderMovLog();
+  totemEtapa1();
+}
+
+function renderMovLog(){
+  const box = document.getElementById('movLog');
+  if(!DB.Movimentacoes_Trocas.length){
+    box.innerHTML = '<div class="text-[var(--dim)] text-[11px]">Nenhuma movimentação neste turno.</div>';
+    return;
+  }
+  const cor = { PENDENTE:'var(--warn)', CONFIRMADO:'var(--ok)', RECUSADO:'var(--danger)', EXPIRADO:'var(--dim)' };
+  box.innerHTML = [...DB.Movimentacoes_Trocas].reverse().slice(0,8).map(m => `
+    <div class="panel2 rounded p-2.5" style="border-left:3px solid ${cor[m.status_confirmacao_totem]}">
+      <div class="flex justify-between gap-2 mb-1">
+        <span class="mono text-[10px] text-[var(--dim)] truncate">${m.id_movimentacao}</span>
+        <span class="mono text-[9px] px-1.5 rounded shrink-0"
+              style="background:${cor[m.status_confirmacao_totem]}22;color:${cor[m.status_confirmacao_totem]}">${m.status_confirmacao_totem}</span>
+      </div>
+      <div class="mono text-[11px]">${m.matricula} · ${m.codigo_epi}</div>
+      <div class="mono text-[9px] text-[var(--dim)] mt-0.5">${m.tipo_movimentacao} · ${m.motivo_troca} · ${m.impacto_gamificacao}</div>
+    </div>`).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 7 · TELA 3 — DASHBOARD DO GESTOR
+   Dupla trava: perfil precisa ter permissão E o gestor só vê o
+   setor onde ele consta como id_gestor_responsavel.
+═══════════════════════════════════════════════════════════════ */
+
+function renderGestor(){
+  const gate = document.getElementById('gestorGate');
+  const content = document.getElementById('gestorContent');
+
+  if(!podeVer('gestor')){
+    content.classList.add('hidden');
+    gate.classList.remove('hidden');
+    registrarLog({ acao_realizada:'CONSULTA_SENSIVEL', tabela_afetada:'Dashboard_Gestor',
+      id_registro_afetado:'ALERTA_FADIGA', origem_acao:'WEB_DESKTOP',
+      resultado:'NEGADO_RBAC', criticidade:'AVISO' });
+    gate.innerHTML = `
+      <div class="panel rounded-lg p-10 text-center max-w-xl mx-auto mt-10 rise" style="border-color:var(--danger)">
+        <div class="hazard-red h-2 rounded-sm mb-7"></div>
+        <div class="mono text-[11px] tracking-[.16em] mb-3" style="color:var(--danger)">ACESSO NEGADO · RBAC</div>
+        <h2 class="display text-3xl mb-3">Painel restrito</h2>
+        <p class="text-sm text-[var(--dim)] mb-2">
+          O perfil <strong class="mono text-[var(--ink)]">${SESSAO.perfil_rbac}</strong> não tem permissão para ver alertas preditivos de fadiga.
+        </p>
+        <p class="text-xs text-[var(--dim)] mb-6">Disponível para GESTOR, SST e ADMIN. A tentativa foi registrada no log de auditoria.</p>
+        <div class="mono text-[10px] text-[var(--dim)]">acao_realizada: CONSULTA_SENSIVEL · resultado: NEGADO_RBAC</div>
+      </div>`;
+    return;
+  }
+
+  gate.classList.add('hidden');
+  content.classList.remove('hidden');
+
+  // Escopo: setores sob responsabilidade. SST e ADMIN enxergam todos.
+  const setores = ['SST','ADMIN'].includes(SESSAO.perfil_rbac)
+    ? DB.Setores
+    : DB.Setores.filter(s => s.id_gestor_responsavel === SESSAO.matricula || s.id_setor === SESSAO.setor);
+
+  const idsSetores = setores.map(s => s.id_setor);
+  const equipe = DB.Funcionarios.filter(f => idsSetores.includes(f.setor) && f.status !== 'DESLIGADO');
+
+  document.getElementById('gestorSubtitle').textContent =
+    `${SESSAO.nome_completo} · ${setores.map(s=>s.nome_setor).join(', ')} · ${equipe.length} colaboradores no escopo`;
+
+  /* --- Fadiga --- */
+  const fadigas = equipe.map(f => calcularFadiga(f.matricula)).filter(Boolean)
+    .sort((a,b) => b.score - a.score);
+
+  const cores = { CRITICO:'var(--danger)', ALTO:'var(--warn)', MODERADO:'var(--info)', BAIXO:'var(--ok)' };
+  const acoes = {
+    CRITICO:'Restringir atividades críticas e acionar a SST hoje.',
+    ALTO:'Redistribuir carga e reavaliar em 48h.',
+    MODERADO:'Acompanhar. Evitar novo turno estendido esta semana.',
+    BAIXO:'Monitoramento passivo.',
+  };
+
+  document.getElementById('fadigaGrid').innerHTML = fadigas.map(f => `
+    <div class="panel rounded-lg p-4 rise ${f.nivel==='CRITICO'?'ring':''}" style="border-left:3px solid ${cores[f.nivel]}">
+      <div class="flex justify-between items-start gap-2 mb-2.5">
+        <div class="min-w-0">
+          <div class="font-semibold truncate">${f.nome}</div>
+          <div class="mono text-[10px] text-[var(--dim)]">${f.matricula} · ${f.funcao}</div>
+        </div>
+        <span class="mono text-[10px] px-2 py-1 rounded shrink-0"
+              style="background:${cores[f.nivel]}22;color:${cores[f.nivel]}">${f.nivel}</span>
+      </div>
+      <div class="h-1.5 rounded-full bg-[var(--graphite)] mb-3 overflow-hidden">
+        <div style="width:${Math.min(100, f.score*10)}%;background:${cores[f.nivel]}" class="h-full"></div>
+      </div>
+      ${f.fatores.length ? f.fatores.map(x=>`
+        <div class="flex gap-2 text-[11px] text-[var(--dim)] mb-1"><span style="color:${cores[f.nivel]}">▪</span><span>${x}</span></div>`).join('')
+        : '<div class="text-[11px] text-[var(--dim)]">Jornada dentro dos parâmetros.</div>'}
+      <div class="mt-3 pt-2.5 border-t border-[var(--line)] text-[11px]" style="color:${cores[f.nivel]}">
+        ${acoes[f.nivel]}
+      </div>
+    </div>`).join('');
+
+  /* --- KPIs --- */
+  const criticos = fadigas.filter(f=>f.nivel==='CRITICO').length;
+  const altos    = fadigas.filter(f=>f.nivel==='ALTO').length;
+  const bloqueados = equipe.filter(f => !validarColaborador(f.matricula).liberado).length;
+  document.getElementById('gestorKpis').innerHTML = [
+    ['Fadiga crítica', criticos, criticos?'var(--danger)':'var(--dim)'],
+    ['Fadiga alta', altos, altos?'var(--warn)':'var(--dim)'],
+    ['Bloqueados', bloqueados, bloqueados?'var(--danger)':'var(--dim)'],
+  ].map(([l,v,c])=>`
+    <div class="panel rounded px-4 py-2.5 text-center min-w-[100px]">
+      <div class="display text-3xl" style="color:${c}">${v}</div>
+      <div class="mono text-[9px] text-[var(--dim)] mt-0.5">${l.toUpperCase()}</div>
+    </div>`).join('');
+
+  /* --- Pendências de EPI e NR --- */
+  const pend = equipe.map(f => ({ f, v:validarColaborador(f.matricula) }))
+                     .filter(x => x.v.motivos.length || x.v.alertas.length);
+  document.getElementById('pendGrid').innerHTML = pend.length ? pend.map(({f,v})=>`
+    <div class="panel2 rounded p-3" style="border-left:3px solid ${v.motivos.length?'var(--danger)':'var(--warn)'}">
+      <div class="flex justify-between gap-2 mb-1.5">
+        <span class="font-semibold text-sm">${f.nome_completo}</span>
+        <span class="mono text-[10px] text-[var(--dim)]">${f.matricula}</span>
+      </div>
+      ${[...v.motivos.map(m=>[m,'var(--danger)']), ...v.alertas.map(a=>[a,'var(--warn)'])]
+        .map(([t,c])=>`<div class="text-[11px] mb-0.5" style="color:${c}">▪ ${t}</div>`).join('')}
+    </div>`).join('')
+    : '<div class="text-[var(--dim)] text-sm">Nenhuma pendência normativa no setor.</div>';
+
+  /* --- Mentorias --- */
+  const vinculos = DB.Gamificacao_Mentoria.filter(v => idsSetores.includes(v.id_setor));
+  document.getElementById('mentoriaGrid').innerHTML = vinculos.map(v => {
+    const calc = calcularBonusMentor(v);
+    const mentor = DB.Funcionarios.find(f=>f.matricula===v.matricula_mentor);
+    const mentorado = DB.Funcionarios.find(f=>f.matricula===v.matricula_mentorado);
+    const negativa = calc.evolucaoBruta < 0;
+    return `
+      <div class="panel2 rounded p-3.5" style="border-left:3px solid ${negativa?'var(--dim)':'var(--ok)'}">
+        <div class="flex justify-between items-start gap-2 mb-2">
+          <div class="min-w-0">
+            <div class="text-sm"><strong>${mentor.nome_completo}</strong> <span class="text-[var(--dim)]">orienta</span> ${mentorado.nome_completo}</div>
+            <div class="mono text-[10px] text-[var(--dim)]">${v.id_vinculo} · repasse ${(v.percentual_repasse_mentor*100).toFixed(0)}%</div>
+          </div>
+          <div class="text-right shrink-0">
+            <div class="display text-xl" style="color:var(--ok)">+${calc.saldo_bonus_mentor}</div>
+            <div class="mono text-[9px] text-[var(--dim)]">SALDO MENTOR</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 mono text-[10px]">
+          <div><span class="text-[var(--dim)]">evolução</span><br>${calc.evolucaoBruta >= 0 ? '+' : ''}${calc.evolucaoBruta}</div>
+          <div><span class="text-[var(--dim)]">líquida (piso 0)</span><br>${calc.evolucaoLiquida}</div>
+          <div><span class="text-[var(--dim)]">infrações mentorado</span><br>
+            <span style="color:${v.infracoes_mentorado?'var(--warn)':'var(--dim)'}">${v.infracoes_mentorado}</span></div>
+        </div>
+        ${(negativa || v.infracoes_mentorado) ? `
+          <div class="mt-2.5 pt-2 border-t border-[var(--line)] text-[10.5px]" style="color:var(--ok)">
+            Impacto no mentor: <strong>zero</strong>. ${negativa?'Evolução negativa não gera débito.':''} ${v.infracoes_mentorado?'Infrações do mentorado não entram no cálculo.':''}
+          </div>` : ''}
+      </div>`;
+  }).join('') || '<div class="text-[var(--dim)] text-sm">Nenhuma mentoria ativa.</div>';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BLOCO 8 · NAVEGAÇÃO E INICIALIZAÇÃO
+═══════════════════════════════════════════════════════════════ */
+
+function navegar(destino){
+  document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+  document.getElementById('view-'+destino).classList.remove('hidden');
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    const on = b.dataset.nav === destino;
+    b.style.background = on ? 'var(--warn)' : 'transparent';
+    b.style.color = on ? 'var(--graphite)' : 'var(--ink)';
+    b.style.borderColor = on ? 'var(--warn)' : 'var(--line)';
+  });
+  if(destino === 'gestor') renderGestor();
+  if(destino === 'totem')  { totemEtapa1(); renderMovLog(); }
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => navegar(b.dataset.nav));
+
+document.getElementById('selPerfil').onchange = (e) => {
+  abrirSessao(e.target.value);
+  const atual = [...document.querySelectorAll('.view')].find(v => !v.classList.contains('hidden'));
+  navegar(atual.id.replace('view-',''));
+};
+
+document.getElementById('btnPonto').onclick = () =>
+  marcarPonto(document.getElementById('pontoInput').value.trim().toUpperCase());
+document.getElementById('pontoInput').addEventListener('keydown', e => {
+  if(e.key === 'Enter') document.getElementById('btnPonto').click();
+});
+document.querySelectorAll('.chip-mat').forEach(b => b.onclick = () => marcarPonto(b.textContent));
+
+abrirSessao('NAT-00001');
+navegar('ponto');
+renderPontoLog();
+</script>
+</body>
+</html>

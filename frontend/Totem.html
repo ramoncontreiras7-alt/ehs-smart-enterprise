@@ -1,0 +1,368 @@
+<!--
+  ============================================================
+  ARQUIVO: Totem.html
+  Cole este conteúdo em um arquivo HTML chamado exatamente
+  "Totem" (sem extensão) no editor do Apps Script.
+
+  URL de acesso (exige token — gere com setup_GerarTokensTotem()):
+    https://script.google.com/.../exec?tela=totem&id=TOTEM_01&token=<token>
+
+  Sem token válido o doGet recusa servir esta página.
+
+  Contrato com o backend (Code.gs, BLOCO 6):
+    api_ValidarTotem(matricula, idTotem) → {
+      status: 'LIBERADO' | 'BLOQUEADO',
+      matricula, nome, funcao, setor, tipo_vinculo,
+      motivos: [...],      // razões do bloqueio
+      alertas: [...],      // avisos não-bloqueantes
+      epis:    [...]       // {codigo_epi, nome, numero_ca, liberavel, bloqueios}
+    }
+
+  Filosofia (Dossiê 3.3.1):
+    O totem é uma resposta binária. NÃO exibe fadiga, saúde
+    nem preditivo. Diretor e operador recebem o mesmo payload.
+  ============================================================
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>EHS — Totem de Validação</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #0a0d10;
+    color: #f4f4f4;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  #palco { position: fixed; inset: 0; display: grid; place-items: center; padding: 4vh 4vw; transition: background .25s; }
+  .palco-espera    { background: #0a0d10; }
+  .palco-checando  { background: #14181c; }
+  .palco-liberado  { background: #0e5a2e; }
+  .palco-bloqueado { background: #7a1210; }
+  .palco-erro      { background: #6b4a00; }
+
+  .cartao { width: 100%; max-width: 900px; text-align: center; }
+
+  /* ── Tela de ESPERA ───────────────────────────────────────── */
+  .marca {
+    display: inline-grid; place-items: center;
+    width: 96px; height: 96px; margin-bottom: 24px;
+    background: #f4f4f4; color: #0a0d10;
+    font-weight: 900; font-size: 32px; letter-spacing: .04em;
+  }
+  .titulo-espera { font-size: clamp(32px, 6vw, 64px); font-weight: 800; letter-spacing: -.02em; margin-bottom: 12px; }
+  .subtitulo-espera { font-size: clamp(16px, 2vw, 22px); color: #9aa4ae; margin-bottom: 40px; }
+  .input-cracha {
+    width: 100%; max-width: 520px;
+    padding: 22px 28px;
+    font-size: clamp(24px, 3vw, 36px); font-weight: 700;
+    text-align: center; letter-spacing: .1em;
+    background: #1a1f24; color: #f4f4f4;
+    border: 2px solid #2a3138; border-radius: 12px;
+    outline: none;
+    font-family: "SF Mono", Consolas, monospace;
+  }
+  .input-cracha:focus { border-color: #f4f4f4; }
+  .dica {
+    margin-top: 24px; font-size: 14px; color: #6b7580;
+    font-family: "SF Mono", Consolas, monospace;
+  }
+
+  /* ── Tela CHECANDO ────────────────────────────────────────── */
+  .spinner {
+    width: 72px; height: 72px; margin: 0 auto 24px;
+    border: 6px solid rgba(244, 244, 244, .15);
+    border-top-color: #f4f4f4;
+    border-radius: 50%;
+    animation: girar 1s linear infinite;
+  }
+  @keyframes girar { to { transform: rotate(360deg); } }
+  .msg-checando { font-size: clamp(20px, 2.5vw, 28px); color: #9aa4ae; }
+
+  /* ── Tela RESULTADO (comum) ───────────────────────────────── */
+  .selo {
+    display: inline-block;
+    padding: 12px 32px;
+    font-size: clamp(28px, 4vw, 44px); font-weight: 900;
+    letter-spacing: .08em;
+    margin-bottom: 28px;
+    border: 4px solid #f4f4f4;
+  }
+  .nome { font-size: clamp(36px, 5.5vw, 64px); font-weight: 800; margin-bottom: 8px; line-height: 1.1; }
+  .funcao-setor { font-size: clamp(18px, 2.2vw, 26px); opacity: .85; margin-bottom: 32px; }
+  .matricula-mini {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 14px; opacity: .5;
+    margin-top: 8px;
+  }
+
+  .lista-motivos {
+    max-width: 700px; margin: 0 auto 32px;
+    padding: 20px;
+    background: rgba(0, 0, 0, .25);
+    border-left: 4px solid #f4f4f4;
+    text-align: left;
+  }
+  .lista-motivos li {
+    list-style: none;
+    padding: 8px 0;
+    font-size: clamp(16px, 2vw, 20px);
+    border-bottom: 1px solid rgba(255, 255, 255, .1);
+  }
+  .lista-motivos li:last-child { border-bottom: none; }
+  .lista-motivos-titulo {
+    font-size: 13px; font-weight: 700; letter-spacing: .1em;
+    opacity: .7; margin-bottom: 8px; text-transform: uppercase;
+  }
+
+  .grade-epis {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    max-width: 800px; margin: 0 auto;
+  }
+  .epi {
+    padding: 14px 12px;
+    background: rgba(0, 0, 0, .25);
+    border: 2px solid rgba(244, 244, 244, .3);
+    border-radius: 8px;
+    font-size: 14px;
+    text-align: left;
+  }
+  .epi-nome { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .epi-ca { font-family: "SF Mono", Consolas, monospace; font-size: 11px; opacity: .7; }
+  .epi.bloqueado { border-color: #ff8a80; opacity: .6; }
+
+  .contador {
+    position: fixed; bottom: 24px; right: 32px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px; opacity: .5;
+  }
+  .id-totem {
+    position: fixed; top: 24px; right: 32px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px; opacity: .5;
+  }
+</style>
+</head>
+<body>
+
+<div id="id-totem" class="id-totem">—</div>
+
+<div id="palco" class="palco-espera">
+
+  <!-- ESTADO: ESPERA -->
+  <div id="tela-espera" class="cartao">
+    <div class="marca">EHS</div>
+    <p class="titulo-espera">Aproxime o crachá</p>
+    <p class="subtitulo-espera">ou digite a matrícula</p>
+    <input id="input-cracha"
+           class="input-cracha"
+           type="text"
+           inputmode="numeric"
+           autocomplete="off"
+           autocorrect="off"
+           spellcheck="false"
+           maxlength="20"
+           placeholder="—">
+    <p class="dica">ENTER para validar · ESC para limpar</p>
+  </div>
+
+  <!-- ESTADO: CHECANDO -->
+  <div id="tela-checando" class="cartao" style="display:none">
+    <div class="spinner"></div>
+    <p class="msg-checando">Validando acesso...</p>
+  </div>
+
+  <!-- ESTADO: RESULTADO -->
+  <div id="tela-resultado" class="cartao" style="display:none">
+    <div id="resultado-selo" class="selo">—</div>
+    <p id="resultado-nome" class="nome">—</p>
+    <p id="resultado-funcao-setor" class="funcao-setor">—</p>
+    <div id="resultado-motivos"></div>
+    <div id="resultado-epis"></div>
+    <p id="resultado-matricula" class="matricula-mini">—</p>
+  </div>
+
+</div>
+
+<div id="contador" class="contador" style="display:none">Voltando em <span id="contador-num">4</span>s</div>
+
+<script>
+/* ============================================================
+   TOTEM — validação binária de acesso
+   Sem sessão Google. Kiosk público.
+   ============================================================ */
+
+// O doGet já validou o token antes de servir esta página. Relemos o id aqui
+// só para carimbar o log de auditoria e exibir no canto da tela.
+const ID_TOTEM = (() => {
+  const url = new URL(window.location.href);
+  return url.searchParams.get('id') || url.searchParams.get('totem') || 'TOTEM_01';
+})();
+document.getElementById('id-totem').textContent = ID_TOTEM;
+
+const palco    = document.getElementById('palco');
+const telaEspera    = document.getElementById('tela-espera');
+const telaChecando  = document.getElementById('tela-checando');
+const telaResultado = document.getElementById('tela-resultado');
+const input    = document.getElementById('input-cracha');
+const contador = document.getElementById('contador');
+const contNum  = document.getElementById('contador-num');
+
+let timerVoltar = null;
+let timerContador = null;
+
+function mostrar(estado) {
+  telaEspera.style.display    = estado === 'espera'    ? '' : 'none';
+  telaChecando.style.display  = estado === 'checando'  ? '' : 'none';
+  telaResultado.style.display = estado === 'resultado' ? '' : 'none';
+  contador.style.display      = estado === 'resultado' ? '' : 'none';
+
+  palco.className = 'palco-' + (estado === 'checando' ? 'checando' : 'espera');
+  if (estado === 'espera') foco();
+}
+
+function foco() {
+  setTimeout(() => { input.focus(); input.select(); }, 40);
+}
+
+function limpar() {
+  input.value = '';
+  if (timerVoltar)   { clearTimeout(timerVoltar);   timerVoltar = null; }
+  if (timerContador) { clearInterval(timerContador); timerContador = null; }
+  mostrar('espera');
+}
+
+function agendarVolta(segundos) {
+  segundos = segundos || 4;
+  contNum.textContent = segundos;
+  let restante = segundos;
+  timerContador = setInterval(() => {
+    restante--;
+    contNum.textContent = Math.max(0, restante);
+    if (restante <= 0) { clearInterval(timerContador); timerContador = null; }
+  }, 1000);
+  timerVoltar = setTimeout(limpar, segundos * 1000);
+}
+
+/* ── Submit ──────────────────────────────────────────────── */
+input.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    const matricula = input.value.trim();
+    if (matricula) validar(matricula);
+  } else if (ev.key === 'Escape') {
+    limpar();
+  }
+});
+
+// Se o usuário clicar em qualquer lugar da tela de espera, devolve o foco ao input
+document.addEventListener('click', () => {
+  if (telaEspera.style.display !== 'none') foco();
+});
+
+// Foco perdido (leitor RFID enviou dados fora do input): reforça
+input.addEventListener('blur', () => {
+  if (telaEspera.style.display !== 'none') foco();
+});
+
+function validar(matricula) {
+  mostrar('checando');
+  google.script.run
+    .withSuccessHandler(renderizar)
+    .withFailureHandler(mostrarErro)
+    .api_ValidarTotem(matricula, ID_TOTEM);
+}
+
+function renderizar(resp) {
+  if (!resp || !resp.status) {
+    mostrarErro({ message: 'Resposta inesperada do servidor.' });
+    return;
+  }
+
+  const liberado = resp.status === 'LIBERADO';
+  palco.className = 'palco-' + (liberado ? 'liberado' : 'bloqueado');
+
+  document.getElementById('resultado-selo').textContent = liberado ? '✓ LIBERADO' : '✕ BLOQUEADO';
+  document.getElementById('resultado-nome').textContent = resp.nome || '—';
+
+  const detalhes = [resp.funcao, resp.setor, resp.tipo_vinculo].filter(Boolean).join(' · ');
+  document.getElementById('resultado-funcao-setor').textContent = detalhes || '';
+
+  document.getElementById('resultado-matricula').textContent =
+    'matrícula ' + (resp.matricula || '—') + ' · totem ' + ID_TOTEM;
+
+  // Motivos de bloqueio ou alertas
+  const areaMotivos = document.getElementById('resultado-motivos');
+  const listaMotivos = (resp.motivos && resp.motivos.length) ? resp.motivos
+                     : (resp.alertas && resp.alertas.length && !liberado) ? resp.alertas
+                     : [];
+  const tituloMotivos = liberado ? 'Avisos' : 'Motivos do bloqueio';
+  const alertasSeLiberado = (liberado && resp.alertas && resp.alertas.length) ? resp.alertas : [];
+  const paraExibir = liberado ? alertasSeLiberado : listaMotivos;
+
+  if (paraExibir.length) {
+    areaMotivos.innerHTML =
+      '<div class="lista-motivos">' +
+        '<p class="lista-motivos-titulo">' + tituloMotivos + '</p>' +
+        '<ul>' + paraExibir.map(m => '<li>' + escapar(m) + '</li>').join('') + '</ul>' +
+      '</div>';
+  } else {
+    areaMotivos.innerHTML = '';
+  }
+
+  // Grade de EPIs (só se liberado e houver EPIs)
+  const areaEpis = document.getElementById('resultado-epis');
+  if (liberado && resp.epis && resp.epis.length) {
+    areaEpis.innerHTML =
+      '<div class="grade-epis">' +
+        resp.epis.map(e => {
+          const bloq = e.liberavel === false;
+          return '<div class="epi' + (bloq ? ' bloqueado' : '') + '">' +
+                   '<div class="epi-nome">' + escapar(e.nome || e.codigo_epi || '—') + '</div>' +
+                   (e.numero_ca ? '<div class="epi-ca">CA ' + escapar(e.numero_ca) + '</div>' : '') +
+                 '</div>';
+        }).join('') +
+      '</div>';
+  } else {
+    areaEpis.innerHTML = '';
+  }
+
+  mostrar('resultado');
+  contador.style.display = '';
+  agendarVolta(liberado ? 4 : 6);
+}
+
+function mostrarErro(err) {
+  palco.className = 'palco-erro';
+  document.getElementById('resultado-selo').textContent = '⚠ ERRO';
+  document.getElementById('resultado-nome').textContent = 'Falha ao validar';
+  document.getElementById('resultado-funcao-setor').textContent =
+    (err && err.message) ? err.message : 'Tente novamente em instantes.';
+  document.getElementById('resultado-motivos').innerHTML = '';
+  document.getElementById('resultado-epis').innerHTML = '';
+  document.getElementById('resultado-matricula').textContent = 'totem ' + ID_TOTEM;
+  mostrar('resultado');
+  contador.style.display = '';
+  agendarVolta(5);
+}
+
+function escapar(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Bootstrap
+foco();
+</script>
+</body>
+</html>
