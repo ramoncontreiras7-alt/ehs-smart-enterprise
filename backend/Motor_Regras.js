@@ -147,7 +147,6 @@ function rotina_VarrerFadiga() {
     const matricula = linha[cf.matricula - 1];
     if (!matricula) return;
 
-    // Terceirizado segue via rápida de compliance — fora do preditivo
     if (String(linha[cf.tipo_vinculo - 1]).toUpperCase() !== 'NATIVO') return;
     const statusEfetivo = linha[cf.status_efetivo - 1] || linha[cf.status - 1];
     if (String(statusEfetivo).toUpperCase() !== 'ATIVO') return;
@@ -168,10 +167,42 @@ function rotina_VarrerFadiga() {
                      destinatario + '. Fatores: ' + f.fatores.join(' | ')
     });
 
+    if (CFG.FEATURE_FLAGS && CFG.FEATURE_FLAGS.alertas_fadiga_email) {
+      _enviarAlertaFadiga(matricula, f, destinatario);
+    }
+
     disparados.push({ alerta: f, destinatario: destinatario });
   });
 
   return disparados;
+}
+
+function _enviarAlertaFadiga(matricula, alerta, matriculaGestor) {
+  try {
+    const gestor = _obterUsuario(matriculaGestor);
+    const colaborador = _obterUsuario(matricula);
+    if (!gestor || !colaborador) return;
+
+    const assunto = '[EHS] Alerta de Fadiga — ' + alerta.nivel + ' | ' + colaborador.nome_completo;
+    const corpo = [
+      'Alerta de fadiga preditiva detectado.',
+      '',
+      'Colaborador: ' + colaborador.nome_completo + ' (' + matricula + ')',
+      'Setor: ' + (colaborador.setor || '—'),
+      'Função: ' + (colaborador.funcao || '—'),
+      'Nível: ' + alerta.nivel,
+      'Score: ' + alerta.score,
+      'Fatores: ' + (alerta.fatores || []).join('; '),
+      '',
+      'Acesse o dashboard do gestor para detalhes.'
+    ].join('\n');
+
+    if (gestor.email_corporativo) {
+      GmailApp.sendEmail(gestor.email_corporativo, assunto, corpo);
+    }
+  } catch (erro) {
+    Logger.log('Falha ao enviar alerta de fadiga: ' + erro.message);
+  }
 }
 
 function _resolverGestorDoSetor(idSetor, idGestorFallback) {
@@ -490,6 +521,7 @@ function rotina_ExpirarConfirmacoes() {
 
       if (bloco.length > 0) {
         sh.getRange(2, 1, bloco.length, totalCol).setValues(bloco);
+        _invalidarCache(CFG.ABAS.MOVIMENTACOES);
       }
     }
 
@@ -534,6 +566,63 @@ function rotina_AuditarPermissoes() {
   return { conforme: inconsistencias.length === 0, inconsistencias: inconsistencias };
 }
 
+function rotina_AlertarTreinamentosVencidos() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+
+  try {
+    const ct = CFG.COL_TREINAMENTOS;
+    const dados = _lerTudo(CFG.ABAS.TREINAMENTOS);
+    const agora = new Date();
+    const avisoDias = 30;
+    const limite = new Date(agora.getTime() + avisoDias * 86400000);
+    const alertados = [];
+
+    dados.forEach(function (linha) {
+      if (String(linha[ct.status - 1]).toUpperCase() !== 'VALIDO') return;
+      const vencimento = new Date(linha[ct.data_vencimento - 1]);
+      if (isNaN(vencimento.getTime()) || vencimento > limite) return;
+
+      const matricula = linha[ct.matricula - 1];
+      const funcionario = _obterUsuario(matricula);
+      if (!funcionario) return;
+
+      const gestor = _resolverGestorDoSetor(funcionario.setor, funcionario.id_gestor);
+      const destinatario = _obterUsuario(gestor);
+
+      registrarLog({
+        matricula_usuario: 'SISTEMA', perfil_rbac_no_momento: 'SISTEMA',
+        nivel_hierarquico_no_momento: 'SISTEMA',
+        acao_realizada: 'ALERTA_TREINAMENTO_VENCIDO', tabela_afetada: CFG.ABAS.TREINAMENTOS,
+        id_registro_afetado: matricula, origem_acao: 'ROTINA_AUTOMATICA',
+        id_dispositivo: 'SERVIDOR', resultado: 'SUCESSO', criticidade: 'AVISO',
+        justificativa: 'Treinamento ' + linha[ct.norma - 1] + ' vence em ' +
+                       Utilities.formatDate(vencimento, Session.getScriptTimeZone(), 'dd/MM/yyyy')
+      });
+
+      if (CFG.FEATURE_FLAGS && CFG.FEATURE_FLAGS.alertas_treinamento_email && destinatario && destinatario.email_corporativo) {
+        const assunto = '[EHS] Treinamento vencendo — ' + funcionario.nome_completo;
+        const corpo = [
+          'Treinamento vencendo em até ' + avisoDias + ' dias.',
+          '',
+          'Colaborador: ' + funcionario.nome_completo + ' (' + matricula + ')',
+          'Norma: ' + linha[ct.norma - 1],
+          'Vencimento: ' + Utilities.formatDate(vencimento, Session.getScriptTimeZone(), 'dd/MM/yyyy'),
+          '',
+          'Acesse o sistema para agendar a reciclagem.'
+        ].join('\n');
+        GmailApp.sendEmail(destinatario.email_corporativo, assunto, corpo);
+      }
+
+      alertados.push({ matricula: matricula, norma: linha[ct.norma - 1], vencimento: vencimento });
+    });
+
+    return { alertados: alertados };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function instalarGatilhos() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
 
@@ -541,9 +630,10 @@ function instalarGatilhos() {
   ScriptApp.newTrigger('rotina_ExpirarConfirmacoes').timeBased().everyHours(6).create();
   ScriptApp.newTrigger('rotina_AuditarIntegridade').timeBased().atHour(23).everyDays(1).create();
   ScriptApp.newTrigger('rotina_AuditarPermissoes').timeBased().atHour(5).everyDays(1).create();
+  ScriptApp.newTrigger('rotina_AlertarTreinamentosVencidos').timeBased().atHour(7).everyDays(1).create();
 
-  return 'Gatilhos v2.0 instalados: fadiga (06h), expiração (6/6h), ' +
-         'permissões (05h), integridade (23h).';
+  return 'Gatilhos v2.1 instalados: fadiga (06h), expiração (6/6h), ' +
+         'permissões (05h), integridade (23h), treinamentos (07h).';
 }
 
 

@@ -1,0 +1,192 @@
+<!--
+  ============================================================
+  ARQUIVO: RCA_Incidentes.html
+  Frontend do ciclo RCA/POP — acesso restrito SST/ADMIN.
+  Autenticação: obterContextoUsuarioSessao() (desktop corporativo).
+  ============================================================
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EHS — RCA / Incidentes</title>
+<style>
+  :root { --concreto:#E8E5DF; --tinta:#12161A; --borda:#D8D5CC; --liberado:#19A974; --bloqueado:#E03A2F; --atencao:#F08C1E; --sinal:#FFB000; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--concreto); color: var(--tinta); font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  .header { position: sticky; top: 0; z-index: 50; background: #fff; border-bottom: 1px solid var(--borda); }
+  .header-inner { max-width: 1200px; margin: 0 auto; padding: .75rem 1rem; display: flex; align-items: center; gap: .75rem; }
+  .brand { font-weight: 700; font-size: .85rem; letter-spacing: .03em; }
+  main { max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem; }
+  .cabecalho-secao { border-bottom: 2px solid rgba(18,22,26,.1); padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .titulo { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; margin: .2rem 0 0; }
+  .card { background: #fff; border: 1px solid var(--borda); padding: 1.25rem; margin-bottom: .75rem; }
+  .card h2 { font-size: 1.05rem; font-weight: 700; margin: 0 0 .9rem; }
+  .linha { display: flex; flex-wrap: wrap; gap: 1rem; }
+  .col { flex: 1 1 200px; }
+  label { display: block; font-size: .7rem; font-weight: 700; letter-spacing: .04em; color: rgba(18,22,26,.5); margin-bottom: .25rem; }
+  select, input, textarea { width: 100%; padding: .5rem .6rem; border: 1px solid var(--borda); border-radius: .25rem; font: inherit; }
+  textarea { min-height: 80px; resize: vertical; }
+  .btn { padding: .55rem 1.1rem; background: var(--tinta); color: #fff; border: none; font-weight: 700; font-size: .8rem; cursor: pointer; }
+  .btn:hover { background: rgba(18,22,26,.82); }
+  .btn-secundario { background: transparent; border: 2px solid var(--tinta); color: var(--tinta); }
+  .badge { padding: .25rem .6rem; font-weight: 800; font-size: .72rem; letter-spacing: .05em; color: #fff; display: inline-block; }
+  .badge-aberto { background: var(--atencao); }
+  .badge-em-analise { background: #4b6cb7; }
+  .badge-concluido { background: var(--liberado); }
+  .tabela { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  .tabela th { text-align: left; padding: .5rem; border-bottom: 2px solid var(--borda); font-weight: 700; }
+  .tabela td { padding: .5rem; border-bottom: 1px solid var(--borda); }
+  .msg { padding: .75rem 1rem; background: rgba(240,140,30,.1); border: 1px solid var(--atencao); color: var(--atencao); font-weight: 600; margin-bottom: .75rem; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-inner">
+    <div class="brand">EHS — RCA / Incidentes</div>
+    <div id="usuario" style="margin-left:auto;font-size:.75rem;color:rgba(18,22,26,.5)"></div>
+  </div>
+</div>
+
+<main>
+  <div class="cabecalho-secao">
+    <p class="titulo">Investigação de Incidentes e Ações Preventivas</p>
+    <p style="color:rgba(18,22,26,.5);margin:.3rem 0 0">Acesso restrito a SST e ADMIN.</p>
+  </div>
+
+  <div id="msg-erro" class="msg hidden"></div>
+
+  <div class="card">
+    <h2>Novo Incidente</h2>
+    <form id="form-incidente">
+      <div class="linha">
+        <div class="col">
+          <label>Matrícula acidentado (opcional)</label>
+          <input type="text" id="inp-matricula" placeholder="FIC-0001">
+        </div>
+        <div class="col">
+          <label>Setor</label>
+          <select id="inp-setor"></select>
+        </div>
+        <div class="col">
+          <label>Tipo de evento</label>
+          <select id="inp-tipo">
+            <option value="ACIDENTE">Acidente</option>
+            <option value="QUASE_ACIDENTE">Quase-acidente</option>
+            <option value="DESVIO">Desvio</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>Gravidade</label>
+          <select id="inp-gravidade">
+            <option value="LEVE">Leve</option>
+            <option value="MODERADA">Moderada</option>
+            <option value="GRAVE">Grave</option>
+            <option value="FATAL">Fatal</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:.75rem">
+        <label>Descrição resumida</label>
+        <textarea id="inp-descricao" placeholder="Descreva o ocorrido..."></textarea>
+      </div>
+      <div style="margin-top:.75rem">
+        <label>EPI envolvido (opcional)</label>
+        <input type="text" id="inp-epi" placeholder="EPI-0001">
+      </div>
+      <div style="margin-top:.75rem">
+        <button type="submit" class="btn">Registrar Incidente</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Incidentes Recentes</h2>
+    <div id="lista-incidentes">Carregando...</div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  function mostrarErro(msg) {
+    const el = document.getElementById('msg-erro');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    setTimeout(function () { el.classList.add('hidden'); }, 5000);
+  }
+
+  function init() {
+    const usuario = obterContextoUsuarioSessao();
+    const uEl = document.getElementById('usuario');
+    if (usuario && usuario.matricula) {
+      uEl.textContent = usuario.nome_completo + ' (' + usuario.perfil_rbac + ')';
+      if (['SST','ADMIN'].indexOf(usuario.perfil_rbac) === -1) {
+        mostrarErro('Acesso restrito a SST/ADMIN.');
+        document.getElementById('form-incidente').style.display = 'none';
+      }
+    } else {
+      uEl.textContent = 'Não autenticado';
+    }
+
+    carregarSetores();
+    carregarIncidentes();
+
+    document.getElementById('form-incidente').addEventListener('submit', function (e) {
+      e.preventDefault();
+      registrarIncidente();
+    });
+  }
+
+  function carregarSetores() {
+    google.script.run.withSuccessHandler(function (setores) {
+      const sel = document.getElementById('inp-setor');
+      sel.innerHTML = '<option value="">Selecione</option>' +
+        (setores || []).map(function (s) { return '<option value="' + s.id_setor + '">' + s.nome_setor + '</option>'; }).join('');
+    }).api_ListarSetores();
+  }
+
+  function carregarIncidentes() {
+    google.script.run.withSuccessHandler(function (lista) {
+      const container = document.getElementById('lista-incidentes');
+      if (!lista || !lista.length) {
+        container.innerHTML = '<p style="color:rgba(18,22,26,.5)">Nenhum incidente registrado.</p>';
+        return;
+      }
+      container.innerHTML = '<table class="tabela"><thead><tr><th>ID</th><th>Data</th><th>Tipo</th><th>Gravidade</th><th>Status</th></tr></thead><tbody>' +
+        lista.map(function (inc) {
+          const badge = inc.status === 'ABERTO' ? 'badge-aberto' : inc.status === 'EM_INVESTIGACAO' ? 'badge-em-analise' : 'badge-concluido';
+          return '<tr><td>' + inc.id_incidente + '</td><td>' + (inc.data_hora || '—') + '</td><td>' + inc.tipo_evento + '</td><td>' + inc.gravidade + '</td><td><span class="badge ' + badge + '">' + inc.status + '</span></td></tr>';
+        }).join('') + '</tbody></table>';
+    }).api_ListarIncidentes();
+  }
+
+  function registrarIncidente() {
+    const payload = {
+      id_setor: document.getElementById('inp-setor').value,
+      tipo_evento: document.getElementById('inp-tipo').value,
+      gravidade: document.getElementById('inp-gravidade').value,
+      descricao_resumida: document.getElementById('inp-descricao').value,
+      matricula_acidentado: document.getElementById('inp-matricula').value || '',
+      epi_envolvido: document.getElementById('inp-epi').value || ''
+    };
+
+    google.script.run.withSuccessHandler(function (res) {
+      if (res && res.ok) {
+        document.getElementById('form-incidente').reset();
+        carregarIncidentes();
+      } else {
+        mostrarErro(res && res.erro ? res.erro : 'Erro ao registrar incidente.');
+      }
+    }).api_RegistrarIncidente(payload);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

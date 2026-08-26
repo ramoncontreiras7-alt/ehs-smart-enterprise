@@ -1,0 +1,36 @@
+<!--
+  ============================================================
+  ARQUIVO: sw_totem.html
+  Service Worker para o Totem — modo offline-first.
+  ============================================================
+-->
+self.addEventListener('install', function (event) {
+  event.waitUntil(
+    caches.open('ehs-totem-v1').then(function (cache) {
+      return cache.addAll(['/']);
+    })
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', function (event) {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('fetch', function (event) {
+  event.respondWith(
+    caches.match(event.request).then(function (cached) {
+      return cached || fetch(event.request).catch(function () {
+        return caches.match('/');
+      });
+    })
+  );
+});
+
+self.addEventListener('message', function (event) {
+  if (event.data && event.data.tipo === 'LIMPAR_CACHE') {
+    caches.delete('ehs-totem-v1').then(function () {
+      event.ports[0].postMessage({ ok: true });
+    });
+  }
+});

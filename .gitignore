@@ -1,17 +1,7 @@
-# Arquivos do sistema
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-.DS_Store
-
-# Arquivos temporários
-*.tmp
-*.temp
-~$*
-
-# Logs
+node_modules/
 *.log
-
-# Arquivos de configuração local
-.vscode/
-.idea/
+.clasp.json
+.DS_Store
+Thumbs.db
+.env
+.env.local

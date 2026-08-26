@@ -161,7 +161,14 @@ const CFG = {
   },
 
   HORAS_EXPIRACAO_CONFIRMACAO: 24,
-  TIMEOUT_LOCK: 20000
+  TIMEOUT_LOCK: 20000,
+
+  FEATURE_FLAGS: {
+    alertas_fadiga_email: false,
+    alertas_treinamento_email: false,
+    modo_totem_offline: false,
+    webhook_rca_chat: false
+  }
 };
 
 const CFG_TOTEM = {
@@ -169,3 +176,44 @@ const CFG_TOTEM = {
   LIMITE_POR_MIN: 30,
   JANELA_SEG: 60
 };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HELPERS DE PLANILHA (carregados cedo para evitar dependência circular)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function _aba(nome) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const nomeSeguro = nome ? String(nome) : 'SEM_NOME';
+  let sh = ss.getSheetByName(nomeSeguro);
+  if (!sh) {
+    sh = ss.insertSheet(nomeSeguro);
+    sh.appendRow([nomeSeguro]);
+  }
+  return sh;
+}
+
+function _lerTudo(nomeAba) {
+  const sh = _aba(nomeAba);
+  const ultima = sh.getLastRow();
+  if (ultima < 2) return [];
+  return sh.getRange(2, 1, ultima - 1, sh.getLastColumn()).getValues();
+}
+
+function _buscarLinha(nomeAba, coluna, chave) {
+  const dados = _lerTudo(nomeAba);
+  const alvo = String(chave).trim().toUpperCase();
+  for (let i = 0; i < dados.length; i++) {
+    if (String(dados[i][coluna - 1]).trim().toUpperCase() === alvo) {
+      return { linha: i + 2, dados: dados[i] };
+    }
+  }
+  return null;
+}
+
+function _invalidarCache(nomeAba) {
+  // No-op: mantido por compatibilidade. O cache agora é por leituraFresh em _lerTudo.
+}
+
+function _invalidarCacheGeral() {
+  // No-op: mantido por compatibilidade.
+}

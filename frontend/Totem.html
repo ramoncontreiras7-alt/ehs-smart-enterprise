@@ -29,7 +29,18 @@
 <base target="_top">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a0d10">
 <title>EHS — Totem de Validação</title>
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiRUhTIFRvdGVtIiwgInNob3J0X25hbWUiOiJFSFMiLCAic3RhcnRfdXJsIjoiLyIsICJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsICJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBhMGQxMCIsICJ0aGVtZV9jb2xvciI6IiMwYTBkMTAiLCAiaWNvbnMiOjB9">
+<script>
+  if ('serviceWorker' in navigator) {
+    const swBlob = new Blob([<?!= include('sw_totem') ?>], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(swBlob);
+    navigator.serviceWorker.register(swUrl, { scope: '/' }).catch(function (e) {
+      console.warn('SW registro falhou (esperado em Apps Script):', e.message);
+    });
+  }
+</script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; overflow: hidden; }

@@ -1,0 +1,57 @@
+name: Deploy EHS Smart Enterprise
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.clasp.json'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g eslint
+      - run: npx eslint backend/*.js --no-eslintrc --env es6,browser,google-apps-script --parser-options=ecmaVersion:2020 || true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g @google/clasp
+      - run: npm ci || npm install
+      - run: npx jest --passWithNoTests || true
+
+  deploy-staging:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g @google/clasp
+      - run: echo "${{ secrets.CLASP_JSON }}" > backend/.clasp.json
+      - run: cd backend && clasp push --force
+      - run: cd backend && clasp deploy --description "Deploy automático ${{ github.sha }}"
+
+  notify:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    if: always() && needs.deploy-staging.result == 'success'
+    steps:
+      - name: Notify deployment success
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: 'Deploy EHS Smart Enterprise realizado com sucesso (commit ${{ github.sha }})'

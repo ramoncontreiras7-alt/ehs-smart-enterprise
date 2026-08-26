@@ -1,7 +1,7 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * EHS SMART ENTERPRISE · web.js — v2.0
- * Publicação Web (doGet) e APIs do Dashboard Executivo.
+ * EHS SMART ENTERPRISE · web.js — v2.1
+ * Publicação Web (doGet/doPost) e APIs do Dashboard Executivo.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -27,11 +27,84 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
+  if (tela === 'rca') {
+    return HtmlService.createTemplateFromFile('RCA_Incidentes')
+      .evaluate()
+      .setTitle('EHS — RCA / Incidentes')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('EHS Smart Enterprise — Painel Corporativo')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CFG.TIMEOUT_LOCK);
+  try {
+    const payload = _parsePostPayload(e);
+    if (!payload) {
+      return _jsonResponse(401, { erro: 'Payload inválido ou ausente.' });
+    }
+
+    const idTotem = payload.idTotem || '';
+    const token = payload.token || '';
+    if (!_totemAutorizado(idTotem, token)) {
+      return _jsonResponse(403, { erro: 'Totem não autorizado.' });
+    }
+
+    if (!_totemDentroDoLimite(idTotem)) {
+      return _jsonResponse(429, { status: 'BLOQUEADO', motivos: ['Muitas requisições. Aguarde.'] });
+    }
+
+    if (payload.acao === 'validar' && payload.matricula) {
+      const resultado = api_ValidarTotem(payload.matricula, idTotem);
+      return _jsonResponse(200, resultado);
+    }
+
+    if (payload.acao === 'confirmar' && payload.matricula && payload.codigo_epi) {
+      const resultado = api_RegistrarEntregaEPI(payload.matricula, {
+        codigo_epi: payload.codigo_epi,
+        id_totem: idTotem,
+        metodo_confirmacao: payload.metodo_confirmacao || 'CRACHA_RFID',
+        quantidade: 1
+      });
+      return _jsonResponse(200, resultado);
+    }
+
+    return _jsonResponse(400, { erro: 'Ação não reconhecida.' });
+  } catch (erro) {
+    _gravarLogSemTrava({
+      matricula_usuario: 'SISTEMA', perfil_rbac_no_momento: 'SISTEMA',
+      nivel_hierarquico_no_momento: 'MASTER_ADMIN', acao_realizada: 'ERRO_DOPOST',
+      tabela_afetada: 'web', id_registro_afetado: idTotem || 'DESCONHECIDO',
+      origem_acao: 'TOTEM', resultado: 'ERRO', criticidade: 'CRITICO',
+      justificativa: erro.message
+    });
+    return _jsonResponse(500, { erro: 'Erro interno.', detalhe: erro.message });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _parsePostPayload(e) {
+  try {
+    if (e && e.postData && e.postData.type && e.postData.type.indexOf('application/json') !== -1) {
+      return JSON.parse(e.postData.contents);
+    }
+  } catch (erro) {}
+  return null;
+}
+
+function _jsonResponse(statusCode, obj) {
+  const output = ContentService.createTextOutput(JSON.stringify(obj));
+  output.setMimeType(ContentService.MimeType.JSON);
+  output.setHttpStatusCode(statusCode);
+  return output;
 }
 
 function _totemAutorizado(idTotem, token) {
@@ -43,8 +116,64 @@ function _totemAutorizado(idTotem, token) {
   let mapa;
   try { mapa = JSON.parse(bruto); } catch (_) { return false; }
 
-  const esperado = mapa[idTotem];
-  return !!esperado && esperado === token;
+  const entrada = mapa[idTotem];
+  if (!entrada) return false;
+
+  if (entrada.expira_em && new Date(entrada.expira_em) < new Date()) {
+    return false;
+  }
+
+  return entrada.token === token;
+}
+
+function api_GerarTokenTotem(idTotem, diasValidade) {
+  diasValidade = diasValidade || 90;
+  const bruto = PropertiesService.getScriptProperties().getProperty(CFG_TOTEM.CHAVE_PROPS);
+  let mapa = {};
+  try { mapa = JSON.parse(bruto) || {}; } catch (_) {}
+
+  if (!idTotem) return { ok: false, erro: 'idTotem obrigatório.' };
+
+  const token = Utilities.getUuid().replace(/-/g, '').substring(0, 32);
+  const expiraEm = new Date();
+  expiraEm.setDate(expiraEm.getDate() + diasValidade);
+
+  mapa[idTotem] = {
+    token: token,
+    criado_em: new Date().toISOString(),
+    expira_em: expiraEm.toISOString(),
+    rotacao_automatica: true
+  };
+
+  PropertiesService.getScriptProperties().setProperty(CFG_TOTEM.CHAVE_PROPS, JSON.stringify(mapa));
+
+  return {
+    ok: true,
+    idTotem: idTotem,
+    token: token,
+    expira_em: expiraEm.toISOString(),
+    url: ScriptApp.getService().getUrl() + '?tela=totem&id=' + encodeURIComponent(idTotem) + '&token=' + token
+  };
+}
+
+function api_ListarTokensTotem() {
+  const bruto = PropertiesService.getScriptProperties().getProperty(CFG_TOTEM.CHAVE_PROPS);
+  let mapa = {};
+  try { mapa = JSON.parse(bruto) || {}; } catch (_) {}
+
+  const lista = [];
+  const agora = new Date();
+  for (const id in mapa) {
+    const entrada = mapa[id];
+    lista.push({
+      idTotem: id,
+      criado_em: entrada.criado_em,
+      expira_em: entrada.expira_em,
+      expirado: entrada.expira_em ? new Date(entrada.expira_em) < agora : false,
+      rotacao_automatica: entrada.rotacao_automatica || false
+    });
+  }
+  return lista;
 }
 
 function incluir(nomeArquivo) {
@@ -186,4 +315,38 @@ function util_SetupCabecalhosPrevencao() {
   sh.setFrozenRows(1);
 
   return { ok: true, cabecalhos: cabecalhos };
+}
+
+/**
+ * Health check simples do sistema.
+ * Útil para o frontend validar conexão antes de carregar o painel.
+ */
+function api_HealthCheck() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const planilhaOk = !!ss;
+    const props = PropertiesService.getScriptProperties();
+    const propsOk = !!props;
+
+    let usuarios = 0;
+    try { usuarios = _lerTudo(CFG.ABAS.FUNCIONARIOS).length; } catch (e) {}
+
+    return {
+      ok: true,
+      status: 'HEALTHY',
+      timestamp: new Date().toISOString(),
+      ambiente: {
+        planilha: planilhaOk,
+        properties: propsOk,
+        total_funcionarios_cache: usuarios
+      }
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 'UNHEALTHY',
+      timestamp: new Date().toISOString(),
+      erro: e.message
+    };
+  }
 }

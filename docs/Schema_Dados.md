@@ -330,3 +330,28 @@ exatas.
 | E | prazo_limite | Data |
 | F | status | Lista — PENDENTE\|CONCLUIDA\|BLOQUEIA_ATIVIDADE |
 | G | id_rca_origem | Texto (FK) |
+
+---
+
+## Apêndice A — Abas observadas na planilha mas não documentadas no schema oficial
+
+Abaixo estão abas identificadas em `Dados.xlsx` que ainda não possuem documentação formal nem código backend correspondente. **Elas podem ser vistas como schema drift** e precisam ser oficializadas ou removidas.
+
+| Aba | Status no código | Observação |
+|---|---|---|
+| `Config_UI_Gestores` | Não documentada | Possível configuração de interface; validar se é usada |
+| `Entregas_EPI` | Não documentada | Pode ser view ou cópia de `Movimentacoes_Trocas` filtrada |
+| `Compras_Entrada_Lotes` | Não documentada | Relacionada a `AJUSTE_INVENTARIO` / `ENTRADA_ESTOQUE` |
+| `Ponto_Eletronico` | Não documentada | Possível fonte para `Jornada_Consolidada` |
+| `Riscos_Ocupacionais` | Não documentada | Complementa `Setores.descricao_riscos` |
+| `Controle_Acidentes` | Não documentada | Pode ser view de `Incidentes` |
+| `POPs_Gerados` | Não documentada | Pode ser view de `POPs` |
+| `Colaboradores` | Não documentada | Nome distinto de `Funcionarios` — validar se é duplicata |
+| `Acoes_Preventivas` | **Documentada no código** | `CFG.ABAS.ACOES_PREVENTIVAS` existe em `config.js` e `web.js`, mas estava faltando nesta documentação. Adicionada oficialmente ao schema como aba #14. |
+
+### Ação recomendada
+1. `Colaboradores`: confirmar com o time se é duplicata de `Funcionarios`. Se sim, unificar nomes.
+2. `Config_UI_Gestores`, `Entregas_EPI`, `Compras_Entrada_Lotes`, `Ponto_Eletronico`, `Riscos_Ocupacionais`, `Controle_Acidentes`, `POPs_Gerados`: mapear origem e decidir se são:
+   - **Views** → documentar como tal e remover do escopo de ingestão
+   - **Dados reais** → adicionar ao `Schema_Dados.md` e criar APIs correspondentes
+   - **Lixo** → remover da planilha
