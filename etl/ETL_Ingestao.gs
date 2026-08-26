@@ -38,18 +38,8 @@ var LIMITE_IMPORTACAO = 500;
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   HELPER LOCAL — normalização sem acentos, trim, uppercase.
-   Substitui o antigo normalizar_() que não existe no Code.gs canônico.
-═══════════════════════════════════════════════════════════════════════════ */
-
-function _norm(v) {
-  return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
-}
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
    IMPORTAÇÃO EM LOTE — assinatura pública preservada
-═══════════════════════════════════════════════════════════════════════════ */
+ ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
  * Importa funcionários a partir de linhas já mapeadas pelo worker de ETL.
