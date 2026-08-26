@@ -24,7 +24,7 @@ function doGet(e) {
       .evaluate()
       .setTitle('EHS — Totem de Validação')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.SAMEORIGIN);
   }
 
   if (tela === 'rca') {
@@ -32,14 +32,14 @@ function doGet(e) {
       .evaluate()
       .setTitle('EHS — RCA / Incidentes')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.SAMEORIGIN);
   }
 
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('EHS Smart Enterprise — Painel Corporativo')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.SAMEORIGIN);
 }
 
 function doPost(e) {
@@ -83,9 +83,13 @@ function doPost(e) {
       nivel_hierarquico_no_momento: 'MASTER_ADMIN', acao_realizada: 'ERRO_DOPOST',
       tabela_afetada: 'web', id_registro_afetado: idTotem || 'DESCONHECIDO',
       origem_acao: 'TOTEM', resultado: 'ERRO', criticidade: 'CRITICO',
-      justificativa: erro.message
+      justificativa: 'Erro interno no processamento do webhook.'
     });
-    return _jsonResponse(500, { erro: 'Erro interno.', detalhe: erro.message });
+    const DEBUG = false;
+    return _jsonResponse(500, {
+      erro: 'Erro interno.',
+      ...(DEBUG ? { detalhe: erro.message, stack: erro.stack } : {})
+    });
   } finally {
     lock.releaseLock();
   }
@@ -107,6 +111,21 @@ function _jsonResponse(statusCode, obj) {
   return output;
 }
 
+function _criptografarToken(token) {
+  const segredo = CFG.TOTEM_CRIPTOGRAFIA_SEGredo || 'EHS_TOTEM_SECRET_V2';
+  const bytes = Utilities.computeHmacSha256(token, segredo);
+  return bytes.map(function (b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+function _totemDentroDoLimite(idTotem) {
+  const cache = CacheService.getScriptCache();
+  const chave = 'rate_limit_' + idTotem;
+  const count = parseInt(cache.get(chave) || '0', 10);
+  if (count >= CFG_TOTEM.LIMITE_POR_MIN) return false;
+  cache.put(chave, String(count + 1), CFG_TOTEM.JANELA_SEG);
+  return true;
+}
+
 function _totemAutorizado(idTotem, token) {
   if (!idTotem || !token) return false;
 
@@ -123,7 +142,7 @@ function _totemAutorizado(idTotem, token) {
     return false;
   }
 
-  return entrada.token === token;
+  return entrada.token === _criptografarToken(token);
 }
 
 function api_GerarTokenTotem(idTotem, diasValidade) {
@@ -135,11 +154,12 @@ function api_GerarTokenTotem(idTotem, diasValidade) {
   if (!idTotem) return { ok: false, erro: 'idTotem obrigatório.' };
 
   const token = Utilities.getUuid().replace(/-/g, '').substring(0, 32);
+  const tokenCriptografado = _criptografarToken(token);
   const expiraEm = new Date();
   expiraEm.setDate(expiraEm.getDate() + diasValidade);
 
   mapa[idTotem] = {
-    token: token,
+    token: tokenCriptografado,
     criado_em: new Date().toISOString(),
     expira_em: expiraEm.toISOString(),
     rotacao_automatica: true

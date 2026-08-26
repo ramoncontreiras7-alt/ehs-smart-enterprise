@@ -77,8 +77,39 @@ const CFG_RCA = {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    BLOCO 2 · PASSO 1 — REGISTRO DO INCIDENTE
-   Qualquer FUNCIONARIO, SST ou ADMIN pode registrar. É o gatilho de tudo.
-═══════════════════════════════════════════════════════════════════════════ */
+    Qualquer FUNCIONARIO, SST ou ADMIN pode registrar. É o gatilho de tudo.
+ ═══════════════════════════════════════════════════════════════════════════ */
+
+function api_ListarSetores() {
+  const cs = CFG.COL_SETORES;
+  return _lerTudo(CFG.ABAS.SETORES).map(function (s) {
+    return {
+      id_setor: s[cs.id_setor - 1],
+      nome_setor: s[cs.nome_setor - 1],
+      id_gestor_responsavel: s[cs.id_gestor_responsavel - 1],
+      nivel_criticidade: s[cs.nivel_criticidade - 1],
+      status: s[cs.status - 1]
+    };
+  }).filter(function (s) { return String(s.status).toUpperCase() === 'ATIVO'; });
+}
+
+function api_ListarIncidentes() {
+  const c = CFG_RCA.COL_INCIDENTES;
+  return _lerTudo(CFG_RCA.ABAS.INCIDENTES).map(function (linha) {
+    return {
+      id_incidente: linha[c.id_incidente - 1],
+      data_hora: linha[c.data_hora - 1],
+      tipo_evento: linha[c.tipo_evento - 1],
+      gravidade: linha[c.gravidade - 1],
+      descricao_resumida: linha[c.descricao_resumida - 1],
+      status: linha[c.status - 1],
+      id_rca: linha[c.id_rca - 1],
+      registrado_por: linha[c.registrado_por - 1]
+    };
+  }).sort(function (a, b) {
+    return new Date(b.data_hora || 0) - new Date(a.data_hora || 0);
+  });
+}
 
 function api_RegistrarIncidente(params, matriculaSolicitante) {
   const solicitante = _obterUsuario(matriculaSolicitante);
@@ -99,11 +130,10 @@ function api_RegistrarIncidente(params, matriculaSolicitante) {
   lock.waitLock(CFG.TIMEOUT_LOCK);
   try {
     const sh = _aba(CFG_RCA.ABAS.INCIDENTES);
-    const seq = sh.getLastRow();
     const agora = new Date();
     const idIncidente = 'INC-' +
       Utilities.formatDate(agora, Session.getScriptTimeZone(), 'yyyyMMdd') + '-' +
-      ('0000' + seq).slice(-4);
+      Utilities.getUuid().slice(0, 4);
 
     const c = CFG_RCA.COL_INCIDENTES;
     const linha = [];
@@ -163,9 +193,8 @@ function api_AbrirRCA(idIncidente, matriculaSolicitante) {
   lock.waitLock(CFG.TIMEOUT_LOCK);
   try {
     const sh = _aba(CFG_RCA.ABAS.RCA);
-    const seq = sh.getLastRow();
     const agora = new Date();
-    const idRca = 'RCA-' + ('0000' + seq).slice(-4);
+    const idRca = 'RCA-' + Utilities.getUuid().slice(0, 4);
 
     const c = CFG_RCA.COL_RCA;
     const linha = [];
@@ -477,6 +506,7 @@ function api_GerarReciclagem(dados, matriculaSolicitante) {
     linha[c.id_rca_origem - 1] = dados.id_rca_origem || '';
 
     sh.appendRow(linha);
+    _invalidarCacheGeral();
 
     _gravarLogSemTrava({
       matricula_usuario: solicitante.matricula, perfil_rbac_no_momento: solicitante.perfil_rbac,

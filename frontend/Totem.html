@@ -287,9 +287,19 @@ input.addEventListener('blur', () => {
 
 function validar(matricula) {
   mostrar('checando');
+  const timeoutId = setTimeout(() => {
+    mostrarErro({ message: 'Timeout: resposta do servidor não recebida.' });
+  }, 15000);
+
   google.script.run
-    .withSuccessHandler(renderizar)
-    .withFailureHandler(mostrarErro)
+    .withSuccessHandler((resp) => {
+      clearTimeout(timeoutId);
+      renderizar(resp);
+    })
+    .withFailureHandler((err) => {
+      clearTimeout(timeoutId);
+      mostrarErro(err);
+    })
     .api_ValidarTotem(matricula, ID_TOTEM);
 }
 

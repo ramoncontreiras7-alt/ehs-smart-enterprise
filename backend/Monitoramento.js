@@ -34,11 +34,12 @@ function monitor_HealthCheck() {
     });
 
     try {
-      const log = _lerTudo(CFG.ABAS.LOG);
-      resultado.auditoria.total_registros = log.length;
-      if (log.length > 0) {
-        const ultimo = log[log.length - 1];
-        resultado.auditoria.ultimo_timestamp = ultimo[CFG.COL_LOG.timestamp - 1];
+      const sh = _aba(CFG.ABAS.LOG);
+      const ultimaLinha = sh.getLastRow();
+      resultado.auditoria.total_registros = Math.max(0, ultimaLinha - 1);
+      if (ultimaLinha >= 2) {
+        const ultima = sh.getRange(ultimaLinha, CFG.COL_LOG.timestamp).getValue();
+        resultado.auditoria.ultimo_timestamp = ultima;
       }
     } catch (e) {
       resultado.auditoria.erro = e.message;

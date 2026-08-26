@@ -15,34 +15,12 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════
    BLOCO 1 · PARÂMETROS DO MOTOR PREDITIVO
-═══════════════════════════════════════════════════════════════════════════ */
-
-const FADIGA = {
-  PESOS: {
-    HORAS_EXTRAS_ESTOURO: 3,
-    HORAS_EXTRAS_PROXIMO: 1,
-    TURNOS_SEQUENCIA_ALTA: 3,
-    TURNOS_SEQUENCIA_MEDIA: 1,
-    INTERJORNADA_CURTA: 2,
-    CRITICAS_MUITAS: 2,
-    CRITICAS_ALGUMAS: 1,
-    OCORRENCIA_RECENTE: 2,
-    EXPOSICAO_CRITICA: 1
-  },
-  CORTES: { CRITICO: 8, ALTO: 5, MODERADO: 2 },
-  INTERJORNADA_MINIMA_HORAS: 11
-};
-
-const GAMIFICACAO = {
-  PONTOS_POR_TROCA_POSITIVA: 50,
-  REPASSE_MINIMO: 0.05,
-  REPASSE_MAXIMO: 0.30   // Etapa 2 · item 4: yield de 20% a 30% ao mentor
-};
-
+   FADIGA e GAMIFICACAO estão definidos em config.js.
+ ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    BLOCO 2 · CÁLCULO DA FADIGA
-═══════════════════════════════════════════════════════════════════════════ */
+ ═══════════════════════════════════════════════════════════════════════════ */
 
 function calcularFadiga(matricula) {
   const cj = CFG.COL_JORNADA;

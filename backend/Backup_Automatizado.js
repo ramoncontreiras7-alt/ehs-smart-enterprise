@@ -8,7 +8,9 @@
 const CFG_BACKUP = {
   PASTA_BACKUP: 'EHS_BACKUPS',
   NOME_PLANILHA: 'Dados.xlsx',
-  FORMATO: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  FORMATO: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  FATOR_MB: 1024 * 1024,
+  PRECISAO_MB: 2
 };
 
 function executarBackupCompleto() {
@@ -32,7 +34,7 @@ function executarBackupCompleto() {
       timestamp: new Date().toISOString(),
       arquivo: arquivo.getName(),
       id: arquivo.getId(),
-      tamanho_mb: Math.round(arquivo.getSize() / 1024 / 100 * 10) / 100,
+      tamanho_mb: Math.round(arquivo.getSize() / CFG_BACKUP.FATOR_MB * 100) / 100,
       url: 'https://drive.google.com/file/d/' + arquivo.getId() + '/view'
     });
 
