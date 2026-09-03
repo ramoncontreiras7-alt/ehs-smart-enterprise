@@ -1,25 +1,50 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * EHS SMART ENTERPRISE · Motor_Regras.gs — v2.0
+ * EHS SMART ENTERPRISE · Motor_Regras.gs — v2.1
  * Fadiga preditiva, dashboards por escopo hierárquico, gamificação
- * assimétrica e rotinas automáticas.
+ * assimétrica, rotinas automáticas e conformidade NR-06.
  *
- * NOVIDADE DA v2.0:
- *   · Dashboards passam a respeitar o escopo resolvido por _resolverEscopo()
- *   · Painel da Diretoria: indicadores AGREGADOS, sem nome de colaborador
- *   · Teste de deployment cobre a matriz bidimensional
- *
- * ONDE COLAR: mesmo projeto do Code.gs (Arquivo → + → Script → "Motor_Regras")
+ * NOVIDADE DA v2.1:
+ *   · Integração NR-06 com base em Súmula 289 do TST
+ *   · Peso adicional para infrações de CA/EPI em funções de risco crítico
+ *   · Ações recomendadas com bloqueio/verificação NR-06 explícita
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BLOCO 1 · PARÂMETROS DO MOTOR PREDITIVO
-   FADIGA e GAMIFICACAO estão definidos em config.js.
+   BLOCO 1 · PARÂMETROS DO MOTOR PREDITIVO E NR-06
  ═══════════════════════════════════════════════════════════════════════════ */
 
+const FADIGA = {
+  PESOS: {
+    HORAS_EXTRAS_ESTOURO: 3,
+    HORAS_EXTRAS_PROXIMO: 1,
+    TURNOS_SEQUENCIA_ALTA: 3,
+    TURNOS_SEQUENCIA_MEDIA: 1,
+    INTERJORNADA_CURTA: 2,
+    CRITICAS_MUITAS: 2,
+    CRITICAS_ALGUMAS: 1,
+    OCORRENCIA_RECENTE: 2,
+    EXPOSICAO_CRITICA: 1,
+    NR06_INFRACAO: 5
+  },
+  CORTES: { CRITICO: 8, ALTO: 5, MODERADO: 2 },
+  INTERJORNADA_MINIMA_HORAS: 11,
+  NR06: {
+    EXIGE_VALIDACAO_CA: true,
+    BASE_LEGAL: 'Súmula 289 TST + NR-06.6.1',
+    PRAZO_MINIMO_DIAS: 30
+  }
+};
+
+const GAMIFICACAO = {
+  PONTOS_POR_TROCA_POSITIVA: 50,
+  REPASSE_MINIMO: 0.05,
+  REPASSE_MAXIMO: 0.25
+};
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   BLOCO 2 · CÁLCULO DA FADIGA
+   BLOCO 2 · CÁLCULO DA FADIGA COM NR-06 INTEGRADA
  ═══════════════════════════════════════════════════════════════════════════ */
 
 function calcularFadiga(matricula) {
@@ -91,16 +116,37 @@ function calcularFadiga(matricula) {
     fatores.push('Função de exposição crítica');
   }
 
+  if (FADIGA.NR06.EXIGE_VALIDACAO_CA && grauRisco === 'CRITICO') {
+    const eqRow = _buscarLinha(CFG.ABAS.EQUIPAMENTOS, CFG.COL_EQUIPAMENTOS.codigo_epi, u.codigo_epi_ativo);
+    if (eqRow) {
+      const ce = CFG.COL_EQUIPAMENTOS;
+      const statusCA = String(eqRow.dados[ce.status_ca - 1]).toUpperCase();
+      const numeroCA = eqRow.dados[ce.numero_ca - 1];
+      const validadeDias = eqRow.dados[ce.data_validade_ca - 1];
+
+      const dataValidade = new Date(validadeDias);
+      const diasAteVencimento = Math.ceil((dataValidade - new Date()) / (1000 * 60 * 60 * 24));
+
+      if (statusCA === 'VENCIDO' || diasAteVencimento <= FADIGA.NR06.PRAZO_MINIMO_DIAS) {
+        score += P.NR06_INFRACAO;
+        fatores.push('NR-06: CA ' + numeroCA + (statusCA === 'VENCIDO' ? ' vencido' : ' vence em ' + diasAteVencimento + ' dias'));
+      }
+    } else {
+      score += P.NR06_INFRACAO;
+      fatores.push('NR-06: EPI não cadastrado para função de risco');
+    }
+  }
+
   let nivel = 'BAIXO';
   if (score >= FADIGA.CORTES.CRITICO)       nivel = 'CRITICO';
   else if (score >= FADIGA.CORTES.ALTO)     nivel = 'ALTO';
   else if (score >= FADIGA.CORTES.MODERADO) nivel = 'MODERADO';
 
   const acoes = {
-    CRITICO: 'Restringir atividades críticas e acionar a SST hoje.',
-    ALTO: 'Redistribuir carga operacional e reavaliar em 48h.',
-    MODERADO: 'Acompanhar. Evitar novo turno estendido nesta semana.',
-    BAIXO: 'Monitoramento passivo.'
+    CRITICO: 'Restringir atividades críticas e acionar a SST imediatamente. NR-06: bloquear acesso ao totem.',
+    ALTO: 'Redistribuir carga e verificar conformidade NR-06 em 24h.',
+    MODERADO: 'Monitorar. Priorizar verificação NR-06 no próximo ciclo.',
+    BAIXO: 'Monitoramento padrão.'
   };
 
   return {
