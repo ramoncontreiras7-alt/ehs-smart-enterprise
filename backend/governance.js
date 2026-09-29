@@ -40,6 +40,8 @@ function api_AlterarNivelHierarquico(matriculaAlvo, novoNivel, justificativa, ma
       .getRange(alvo.linha, CFG.COL_FUNCIONARIOS.nivel_hierarquico)
       .setValue(novoNivel);
 
+    _invalidarCacheGeral();
+
     _gravarLogSemTrava({
       matricula_usuario: solicitante.matricula,
       perfil_rbac_no_momento: solicitante.perfil_rbac,

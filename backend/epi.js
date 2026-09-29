@@ -179,6 +179,7 @@ function api_RegistrarEntregaEPI(params) {
     for (let i = 0; i < cm.hash_registro; i++) if (linha[i] === undefined) linha[i] = '';
     linha[cm.hash_registro - 1] = _sha256(linha.join('|'));
     sh.appendRow(linha);
+    _invalidarCache(CFG.ABAS.MOVIMENTACOES);
 
     _gravarLogSemTrava({
       matricula_usuario: responsavel, perfil_rbac_no_momento: operador.perfil_rbac,
@@ -236,6 +237,7 @@ function api_ConfirmarRecebimento(idMovimentacao, metodo, matriculaConfirmante) 
     linhaCompleta[cm.metodo_confirmacao - 1] = metodo;
     linhaCompleta[cm.timestamp_confirmacao - 1] = new Date();
     sh.getRange(r.linha, 1, 1, ultimaCol).setValues([linhaCompleta]);
+    _invalidarCache(CFG.ABAS.MOVIMENTACOES);
 
     const conf = _obterUsuario(matriculaConfirmante);
     _gravarLogSemTrava({

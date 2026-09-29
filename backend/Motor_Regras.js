@@ -15,33 +15,7 @@
    BLOCO 1 · PARÂMETROS DO MOTOR PREDITIVO E NR-06
  ═══════════════════════════════════════════════════════════════════════════ */
 
-const FADIGA = {
-  PESOS: {
-    HORAS_EXTRAS_ESTOURO: 3,
-    HORAS_EXTRAS_PROXIMO: 1,
-    TURNOS_SEQUENCIA_ALTA: 3,
-    TURNOS_SEQUENCIA_MEDIA: 1,
-    INTERJORNADA_CURTA: 2,
-    CRITICAS_MUITAS: 2,
-    CRITICAS_ALGUMAS: 1,
-    OCORRENCIA_RECENTE: 2,
-    EXPOSICAO_CRITICA: 1,
-    NR06_INFRACAO: 5
-  },
-  CORTES: { CRITICO: 8, ALTO: 5, MODERADO: 2 },
-  INTERJORNADA_MINIMA_HORAS: 11,
-  NR06: {
-    EXIGE_VALIDACAO_CA: true,
-    BASE_LEGAL: 'Súmula 289 TST + NR-06.6.1',
-    PRAZO_MINIMO_DIAS: 30
-  }
-};
-
-const GAMIFICACAO = {
-  PONTOS_POR_TROCA_POSITIVA: 50,
-  REPASSE_MINIMO: 0.05,
-  REPASSE_MAXIMO: 0.25
-};
+/* FADIGA e GAMIFICACAO: definidas em config.js (fonte única). */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    BLOCO 2 · CÁLCULO DA FADIGA COM NR-06 INTEGRADA

@@ -42,7 +42,7 @@ const LIMITE_IMPORTACAO = 500;
    Substitui o antigo normalizar_() que não existe no Code.gs canônico.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const _norm = (v) => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
+/* _norm: definida em utils.js (fonte única). */
 
 
 /* ═══════════════════════════════════════════════════════════════════════════

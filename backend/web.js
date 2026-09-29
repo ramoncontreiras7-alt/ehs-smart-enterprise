@@ -111,8 +111,27 @@ function _jsonResponse(statusCode, obj) {
   return output;
 }
 
+function _obterSegredoHmac() {
+  const s = PropertiesService.getScriptProperties()
+              .getProperty(CFG.TOTEM_CRIPTOGRAFIA_CHAVE_PROPS);
+  // Falha alto e claro: sem segredo, nao ha assinatura confiavel.
+  if (!s) throw new Error('TOTEM_HMAC_SECRET ausente. Execute DEFINIR_SEGREDO_HMAC().');
+  return s;
+}
+
+function DEFINIR_SEGREDO_HMAC() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(CFG.TOTEM_CRIPTOGRAFIA_CHAVE_PROPS)) {
+    Logger.log('AVISO: segredo ja existe. Regerar invalida TODOS os tokens ativos.');
+    return;
+  }
+  props.setProperty(CFG.TOTEM_CRIPTOGRAFIA_CHAVE_PROPS,
+                    Utilities.getUuid() + Utilities.getUuid());
+  Logger.log('SUCESSO: TOTEM_HMAC_SECRET gerado.');
+}
+
 function _criptografarToken(token) {
-  const segredo = CFG.TOTEM_CRIPTOGRAFIA_SEGredo || 'EHS_TOTEM_SECRET_V2';
+  const segredo = _obterSegredoHmac();
   const bytes = Utilities.computeHmacSha256(token, segredo);
   return bytes.map(function (b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
 }
@@ -362,11 +381,12 @@ function api_HealthCheck() {
       }
     };
   } catch (e) {
+    Logger.log('EHS-HC-500 :: ' + e.message + ' :: ' + e.stack);
     return {
       ok: false,
       status: 'UNHEALTHY',
       timestamp: new Date().toISOString(),
-      erro: e.message
+      erro: 'EHS-HC-500'
     };
   }
 }

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = 'C:\\EHS\\ARQUIVOS EHS SYSTEM';
+const ROOT = process.env.EHS_ROOT || path.join(__dirname, '..');
 const FILES = {
   web: path.join(ROOT, 'backend', 'web.js'),
   config: path.join(ROOT, 'backend', 'config.js'),
@@ -10,8 +10,8 @@ const FILES = {
   rca: path.join(ROOT, 'backend', 'RCA_POP.js'),
   monitor: path.join(ROOT, 'backend', 'Monitoramento.js'),
   backup: path.join(ROOT, 'backend', 'Backup_Automatizado.js'),
-  totem: path.join(ROOT, 'frontend', 'Totem.html'),
-  etl: path.join(ROOT, 'etl', 'ETL_Ingestao.gs')
+  totem: path.join(ROOT, 'backend', 'Totem.html'),
+  etl: path.join(ROOT, 'backend', 'ETL_Ingestao.js')
 };
 
 function read(file) {

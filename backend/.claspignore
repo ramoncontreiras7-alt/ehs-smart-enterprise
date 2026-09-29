@@ -1,0 +1,5 @@
+# Arquivos que NAO sobem para o Apps Script
+*.test.js
+etl_worker.js
+node_modules/**
+.git/**
