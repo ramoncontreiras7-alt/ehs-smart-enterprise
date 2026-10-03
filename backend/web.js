@@ -24,7 +24,7 @@ function doGet(e) {
       .evaluate()
       .setTitle('EHS — Totem de Validação')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.SAMEORIGIN);
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
 
   if (tela === 'rca') {
@@ -32,14 +32,14 @@ function doGet(e) {
       .evaluate()
       .setTitle('EHS — RCA / Incidentes')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.SAMEORIGIN);
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
 
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('EHS Smart Enterprise — Painel Corporativo')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.SAMEORIGIN);
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
 function doPost(e) {

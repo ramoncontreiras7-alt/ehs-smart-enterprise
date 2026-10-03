@@ -21,6 +21,11 @@
 ### Alterado
 - CI unificado: valida em todo envio; publicação só manual. Os dois workflows antigos falhavam em 100% das execuções.
 
+### Corrigido em produção (03/10, após a 1ª publicação)
+- `web.js` usava `HtmlService.XFrameOptionsMode.SAMEORIGIN`, que **não existe** na API do Apps Script: o Web App abria com `Exception: O argumento não pode ser nulo: mode`. Trocado por `DEFAULT`, que é o modo que faz o Google enviar `X-Frame-Options: SAMEORIGIN` (mesma proteção, API válida).
+- `tools/verificar_carga.js` agora valida membros de enum do Apps Script (reprova nomes inventados antes da publicação).
+- `tests/TESTE_AUDITORIA.js` exigia a string `SAMEORIGIN` — o teste cobrava justamente o erro. Reescrito para checar `XFrameOptionsMode.DEFAULT` e barrar `SAMEORIGIN`/`ALLOWALL`.
+
 ### Pendente de homologação
 - 4 funções duplicadas (`_obterUsuario`, `_obterUsuarioPorEmail`, `_totemDentroDoLimite`, `_invalidarCacheGeral`) — escolher a versão oficial.
 

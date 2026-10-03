@@ -74,6 +74,32 @@ try {
   erro('Projeto NÃO carrega no Apps Script: ' + e.message);
 }
 
+// Membros de enum do Apps Script que existem de verdade.
+// Um nome inventado (ex.: XFrameOptionsMode.SAMEORIGIN) vira `undefined` e so
+// estoura quando a tela abre — por isso e checado aqui, e nao na carga.
+const ENUMS = {
+  'HtmlService.XFrameOptionsMode': ['ALLOWALL', 'DEFAULT'],
+  'HtmlService.SandboxMode': ['IFRAME', 'NATIVE', 'EMULATED'],
+  'ContentService.MimeType': ['ATOM', 'CSV', 'ICAL', 'JAVASCRIPT', 'JSON', 'RSS', 'TEXT', 'VCARD', 'XML'],
+  'Utilities.DigestAlgorithm': ['MD2', 'MD5', 'SHA_1', 'SHA_256', 'SHA_384', 'SHA_512'],
+  'Utilities.Charset': ['US_ASCII', 'UTF_8'],
+  'DriveApp.Access': ['ANYONE', 'ANYONE_WITH_LINK', 'DOMAIN', 'DOMAIN_WITH_LINK', 'PRIVATE'],
+  'DriveApp.Permission': ['VIEW', 'EDIT', 'COMMENT', 'OWNER', 'ORGANIZER', 'FILE_ORGANIZER', 'NONE']
+};
+const reEnum = /\b([A-Z]\w+)\.([A-Z]\w+)\.([A-Z][A-Z_0-9]+)\b/g;
+const varrer = (nomeArq, src) => {
+  let m;
+  while ((m = reEnum.exec(src))) {
+    const chave = m[1] + '.' + m[2];
+    const validos = ENUMS[chave];
+    if (validos && validos.indexOf(m[3]) === -1) {
+      erro(`${nomeArq}: ${chave}.${m[3]} nao existe no Apps Script (validos: ${validos.join(', ')})`);
+    }
+  }
+};
+for (const [f, src] of Object.entries(fontes)) varrer(f, src);
+for (const h of htmls) varrer(h + '.html', fs.readFileSync(path.join(pasta, h + '.html'), 'utf8'));
+
 // Telas referenciadas precisam existir
 const refs = new Set();
 const reTela = /(?:createTemplateFromFile|createHtmlOutputFromFile|include)\(\s*['"]([^'"]+)['"]/g;

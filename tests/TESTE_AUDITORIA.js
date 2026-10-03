@@ -55,9 +55,16 @@ function run() {
   if (assert(web.includes('Utilities.computeHmacSha256'), 'HMAC-SHA256 usado para criptografia')) passed++; else failed++;
   if (assert(web.includes('_criptografarToken(token)'), 'Token é criptografado antes do storage')) passed++; else failed++;
 
-  // 4. X-Frame SAMEORIGIN
-  const sameOriginCount = (web.match(/SAMEORIGIN/g) || []).length;
-  if (assert(sameOriginCount >= 3, 'X-Frame-Options definido como SAMEORIGIN (encontrado: ' + sameOriginCount + ')')) passed++; else failed++;
+  // 4. X-Frame travado na mesma origem.
+  // ATENCAO: XFrameOptionsMode.SAMEORIGIN NAO EXISTE na API do Apps Script —
+  // usa-lo derruba a tela ("O argumento nao pode ser nulo: mode").
+  // O modo DEFAULT e o que faz o Google enviar X-Frame-Options: SAMEORIGIN.
+  const defaultCount = (web.match(/XFrameOptionsMode\.DEFAULT/g) || []).length;
+  if (assert(defaultCount >= 3, 'X-Frame travado na mesma origem via XFrameOptionsMode.DEFAULT (encontrado: ' + defaultCount + ')')) passed++; else failed++;
+  const inexistente = (web.match(/XFrameOptionsMode\.SAMEORIGIN/g) || []).length;
+  if (assert(inexistente === 0, 'Nao usa XFrameOptionsMode.SAMEORIGIN (inexistente na API)')) passed++; else failed++;
+  const allowAll = (web.match(/XFrameOptionsMode\.ALLOWALL/g) || []).length;
+  if (assert(allowAll === 0, 'web.js nao libera embutir em qualquer site (ALLOWALL)')) passed++; else failed++;
   if (assert(!web.includes('ALLOWALL'), 'Sem ALLOWALL no código')) passed++; else failed++;
 
   // 5. Race condition corrigida
