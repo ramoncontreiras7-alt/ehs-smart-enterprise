@@ -63,6 +63,21 @@
 
     /* DASHBOARD */
     #dashboard-screen { display: none; min-height: 100vh; }
+    .skeleton {
+      background: linear-gradient(90deg, rgba(255,255,255,.04) 25%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.04) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 8px;
+      height: 16px;
+      margin-bottom: 10px;
+    }
+    .skeleton.w-60 { width: 60%; }
+    .skeleton.w-80 { width: 80%; }
+    .skeleton.w-100 { width: 100%; }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
     header {
       position: sticky; top: 0; z-index: 100;
       background: rgba(15,17,21,.85);
@@ -428,26 +443,71 @@ function atualizarRelogioBrasilia() {
 setInterval(atualizarRelogioBrasilia, 1000);
 atualizarRelogioBrasilia();
 
+function salvarContextoSessao(ctx) {
+  try { sessionStorage.setItem('ehs_ctx', JSON.stringify(ctx)); } catch (e) {}
+}
+function carregarContextoSessao() {
+  try { return JSON.parse(sessionStorage.getItem('ehs_ctx')); } catch (e) { return null; }
+}
+function limparContextoSessao() {
+  try { sessionStorage.removeItem('ehs_ctx'); } catch (e) {}
+}
+
+function googleScriptRunComRetry(fn, tentativas, atraso) {
+  tentativas = tentativas || 3;
+  atraso = atraso || 800;
+  let tentativa = 0;
+
+  function executar() {
+    tentativa++;
+    const runner = google.script.run
+      .withSuccessHandler(function (res) {
+        if (res && res.ok === false && res.erro && res.erro.indexOf('session') !== -1 && tentativa < tentativas) {
+          setTimeout(executar, atraso * tentativa);
+          return;
+        }
+        fn(res);
+      })
+      .withFailureHandler(function (err) {
+        if (tentativa < tentativas) {
+          setTimeout(executar, atraso * tentativa);
+          return;
+        }
+        fn({ erro: err && err.message ? err.message : 'Erro de comunicação com o servidor.' });
+      });
+    return runner;
+  }
+
+  return executar();
+}
+
 window.onload = function () {
-  google.script.run
-    .withSuccessHandler(function () {
-      google.script.run
-        .withSuccessHandler(function (res) {
-          if (res && res.autenticado) {
-            ctxUsuario = res;
-            if (res.perfil_rbac === 'MASTER_ADMIN' || res.nivel_hierarquico === 'MASTER_ADMIN') {
-              var navConfig = document.getElementById('nav-config');
-              if (navConfig) navConfig.style.display = '';
-            }
-            entrarPainel(res);
-          } else {
-            document.getElementById('login-screen').style.display = 'flex';
-            document.getElementById('dashboard-screen').style.display = 'none';
-          }
-        })
-        .obterContextoUsuario();
-    })
-    .api_VerificarEGarantirSenhaCompartilhada();
+  const ctxSalvo = carregarContextoSessao();
+  if (ctxSalvo && ctxSalvo.autenticado && ctxSalvo.matricula) {
+    ctxUsuario = ctxSalvo;
+    if (ctxSalvo.perfil_rbac === 'MASTER_ADMIN' || ctxSalvo.nivel_hierarquico === 'MASTER_ADMIN') {
+      var navConfig = document.getElementById('nav-config');
+      if (navConfig) navConfig.style.display = '';
+    }
+    entrarPainel(ctxSalvo);
+    return;
+  }
+
+  googleScriptRunComRetry(function (res) {
+    if (res && res.autenticado) {
+      ctxUsuario = res;
+      salvarContextoSessao(res);
+      if (res.perfil_rbac === 'MASTER_ADMIN' || res.nivel_hierarquico === 'MASTER_ADMIN') {
+        var navConfig = document.getElementById('nav-config');
+        if (navConfig) navConfig.style.display = '';
+      }
+      entrarPainel(res);
+    } else {
+      limparContextoSessao();
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('dashboard-screen').style.display = 'none';
+    }
+  }, function () { return obterContextoUsuario(); });
 };
 
 function fazerLogin() {
@@ -466,7 +526,10 @@ function fazerLogin() {
     .api_AutenticarComSenha(id, pass);
 }
 
-function sair() { location.reload(); }
+function sair() {
+  limparContextoSessao();
+  location.reload();
+}
 
 function entrarPainel(ctx) {
   document.getElementById('login-screen').style.display = 'none';
@@ -475,9 +538,7 @@ function entrarPainel(ctx) {
     ? ctx.avisos.map(a => '<div class="aviso-bar">'+escapar(a)+'</div>').join('')
     : '';
 
-  carregarKPIs();
-  carregarAlertasDashboard();
-  carregarPendencias();
+  carregarDashboardConsolidado();
   carregarEstoque();
   carregarGastadores();
   carregarExemplares();
@@ -491,69 +552,72 @@ function mudarAba(aba, btn) {
   btn.classList.add('active');
 }
 
-/* ── KPIs ── */
-function carregarKPIs() {
+/* ── Dashboard Consolidado (1 chamada) ── */
+function carregarDashboardConsolidado() {
   google.script.run.withSuccessHandler(function (res) {
     if (!res) return;
+
     const total = (res.total_equipe || 0);
-    const conformes = total - (res.kpis && res.kpis.bloqueados ? res.kpis.bloqueados : 0);
+    const kpis = res.kpis || {};
+    const conformes = total - (kpis.bloqueados || 0);
     const percConformidade = total ? Math.round((conformes / total) * 1000) / 10 : 0;
     document.getElementById('kpi-ativos').textContent = total;
     document.getElementById('kpi-conformidade').textContent = percConformidade + '%';
-    document.getElementById('kpi-alertas').textContent = (res.kpis && res.kpis.fadiga_critica) || 0;
-  }).api_DashboardGestor(ctxUsuario.matricula);
+    document.getElementById('kpi-alertas').textContent = kpis.fadiga_critica || 0;
 
-  google.script.run.withSuccessHandler(function (res) {
-    if (res && res.eficiencia_epi) {
+    if (res.eficiencia_epi) {
       const c = Math.round(res.eficiencia_epi.aproveitamento_medio_vida_util * 10) / 10;
       document.getElementById('kpi-conservacao').textContent = c + '%';
     }
-  }).api_PainelDiretoria(ctxUsuario.matricula);
+
+    const elAlertas = document.getElementById('painel-alertas-dashboard');
+    if (!res.alertas_fadiga || !res.alertas_fadiga.length) {
+      elAlertas.innerHTML = '<div class="empty">Nenhum alerta de fadiga no momento.</div>';
+    } else {
+      elAlertas.innerHTML = res.alertas_fadiga.slice(0, 8).map(function (a) {
+        const cls = a.nivel === 'CRITICO' ? 'alerta-card' : 'alerta-card warn';
+        return '<div class="'+cls+'"><div class="alerta-title">'+escapar(a.nome)+' · '+escapar(a.funcao)+'</div>' +
+               '<div class="alerta-body">Score: '+a.score+' · Setor: '+escapar(a.setor)+'<br>'+escapar(a.fatores.join(' | '))+'</div></div>';
+      }).join('');
+    }
+
+    const elPendencias = document.getElementById('painel-pendencias-dashboard');
+    if (!res.pendencias_epi_nr || !res.pendencias_epi_nr.length) {
+      elPendencias.innerHTML = '<div class="empty">Todos os colaboradores estão em conformidade.</div>';
+    } else {
+      elPendencias.innerHTML = res.pendencias_epi_nr.slice(0, 8).map(function (p) {
+        const temBloqueio = p.bloqueios && p.bloqueios.length;
+        const cls = temBloqueio ? 'alerta-card' : 'alerta-card warn';
+        return '<div class="'+cls+'"><div class="alerta-title">'+escapar(p.nome)+' · '+escapar(p.matricula)+'</div>' +
+               '<div class="alerta-body">' + (temBloqueio ? p.bloqueios.join('<br>') : p.avisos.join('<br>')) + '</div></div>';
+      }).join('');
+    }
+
+    const elAlertasXerife = document.getElementById('painel-alertas-xerife');
+    if (!res.alertas_pendentes || !res.alertas_pendentes.length) {
+      elAlertasXerife.innerHTML = '<div class="empty">Nenhum alerta pendente.</div>';
+    } else {
+      elAlertasXerife.innerHTML = res.alertas_pendentes.map(function (a) {
+        return '<div class="alerta-card"><div class="alerta-title">'+escapar(a.nome_alvo)+' · '+escapar(a.matricula_alvo)+'</div>' +
+               '<div class="alerta-body">'+escapar(a.alerta)+'<br><small>'+escapar(a.recomendacao)+'</small></div></div>';
+      }).join('');
+    }
+  }).api_DashboardCompleto(ctxUsuario.matricula);
 }
 
-/* ── Alertas ── */
+/* ── KPIs (legacy) ── */
+function carregarKPIs() {
+  carregarDashboardConsolidado();
+}
+
+/* ── Alertas (legacy) ── */
 function carregarAlertasDashboard() {
-  google.script.run.withSuccessHandler(function (res) {
-    const el = document.getElementById('painel-alertas-dashboard');
-    if (!res || !res.alertas_fadiga || !res.alertas_fadiga.length) {
-      el.innerHTML = '<div class="empty">Nenhum alerta de fadiga no momento.</div>';
-      return;
-    }
-    el.innerHTML = res.alertas_fadiga.slice(0, 8).map(function (a) {
-      const cls = a.nivel === 'CRITICO' ? 'alerta-card' : 'alerta-card warn';
-      return '<div class="'+cls+'"><div class="alerta-title">'+escapar(a.nome)+' · '+escapar(a.funcao)+'</div>' +
-             '<div class="alerta-body">Score: '+a.score+' · Setor: '+escapar(a.setor)+'<br>'+escapar(a.fatores.join(' | '))+'</div></div>';
-    }).join('');
-  }).api_DashboardGestor(ctxUsuario.matricula);
-
-  google.script.run.withSuccessHandler(function (res) {
-    const el = document.getElementById('painel-alertas-xerife');
-    if (!res || !res.alertas_pendentes || !res.alertas_pendentes.length) {
-      el.innerHTML = '<div class="empty">Nenhum alerta pendente.</div>';
-      return;
-    }
-    el.innerHTML = res.alertas_pendentes.map(function (a) {
-      return '<div class="alerta-card"><div class="alerta-title">'+escapar(a.nome_alvo)+' · '+escapar(a.matricula_alvo)+'</div>' +
-             '<div class="alerta-body">'+escapar(a.alerta)+'<br><small>'+escapar(a.recomendacao)+'</small></div></div>';
-    }).join('');
-  }).api_BuscarAlertasSupervisor(ctxUsuario.matricula);
+  carregarDashboardConsolidado();
 }
 
-/* ── Pendências ── */
+/* ── Pendências (legacy) ── */
 function carregarPendencias() {
-  google.script.run.withSuccessHandler(function (res) {
-    const el = document.getElementById('painel-pendencias-dashboard');
-    if (!res || !res.pendencias_epi_nr || !res.pendencias_epi_nr.length) {
-      el.innerHTML = '<div class="empty">Todos os colaboradores estão em conformidade.</div>';
-      return;
-    }
-    el.innerHTML = res.pendencias_epi_nr.slice(0, 8).map(function (p) {
-      const temBloqueio = p.bloqueios && p.bloqueios.length;
-      const cls = temBloqueio ? 'alerta-card' : 'alerta-card warn';
-      return '<div class="'+cls+'"><div class="alerta-title">'+escapar(p.nome)+' · '+escapar(p.matricula)+'</div>' +
-             '<div class="alerta-body">' + (temBloqueio ? p.bloqueios.join('<br>') : p.avisos.join('<br>')) + '</div></div>';
-    }).join('');
-  }).api_DashboardGestor(ctxUsuario.matricula);
+  carregarDashboardConsolidado();
 }
 
 /* ── Histórico (Modo Xerife) ── */

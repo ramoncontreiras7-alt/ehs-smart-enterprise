@@ -15,10 +15,16 @@ const FADIGA = {
     CRITICAS_MUITAS: 2,
     CRITICAS_ALGUMAS: 1,
     OCORRENCIA_RECENTE: 2,
-    EXPOSICAO_CRITICA: 1
+    EXPOSICAO_CRITICA: 1,
+    NR06_INFRACAO: 5
   },
   CORTES: { CRITICO: 8, ALTO: 5, MODERADO: 2 },
-  INTERJORNADA_MINIMA_HORAS: 11
+  INTERJORNADA_MINIMA_HORAS: 11,
+  NR06: {
+    EXIGE_VALIDACAO_CA: true,
+    BASE_LEGAL: 'Súmula 289 TST + NR-06.6.1',
+    PRAZO_MINIMO_DIAS: 30
+  }
 };
 
 const GAMIFICACAO = {
@@ -171,7 +177,9 @@ const CFG = {
     webhook_rca_chat: false
   },
 
-  TOTEM_CRIPTOGRAFIA_SEGredo: 'EHS_TOTEM_SECRET_V2'
+  // v2.1 - Segredo HMAC NAO fica no codigo. Vive em ScriptProperties,
+  // chave TOTEM_HMAC_SECRET. Definir via DEFINIR_SEGREDO_HMAC() (web.js).
+  TOTEM_CRIPTOGRAFIA_CHAVE_PROPS: 'TOTEM_HMAC_SECRET'
 };
 
 const CFG_TOTEM = {

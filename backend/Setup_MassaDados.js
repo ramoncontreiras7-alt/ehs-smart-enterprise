@@ -54,6 +54,7 @@ function util_GerarMassaDeDados() {
     ['4001', 'Fernando Terceiro', '555.555.555-55', 'TERCEIRIZADO', 'Empresa X', 'SET-02', 'FUN-02', 'TERCEIRIZADO', '', '', '1000', 'RFID-4001', '', '2024-01-01', '', 'ATIVO', '', new Date(), '', '', 'ATIVO', '', 'OPERACIONAL', '', '']
   ];
   abaFunc.getRange(2, 1, dadosFunc.length, 25).setValues(dadosFunc);
+  _invalidarCacheGeral();
 
   Logger.log('SUCESSO TOTAL! A base foi populada e seu e-mail configurado como MASTER_ADMIN absoluto (Matr�cula: 1000).');
 }
